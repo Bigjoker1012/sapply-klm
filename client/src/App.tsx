@@ -23,7 +23,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'CRITICAL' | 'TRANSFER'>('ALL');
 
-  // Исходные данные таблицы
+  // Исходные данные таблицы (в точности как на твоем макете!)
   const [inventory, setInventory] = useState<InventoryItem[]>([
     { id: 'RAW_001', name: 'Витамин А 1000', polotsk: 111.6, lipki: 0, inTransit: 500, free: -45.3, status: 'СРОЧНО ЗАКУПАТЬ' },
     { id: 'RAW_002', name: 'Витамин Д3 500', polotsk: 46.8, lipki: 200, inTransit: 0, free: 120.5, status: 'ПЕРЕВЕЗТИ С ЛИП' },
@@ -425,7 +425,7 @@ export default function App() {
             База Google Sheets: СВЯЗАНО
           </div>
 
-          <button className="flex-1 md:flex-none bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 text-white py-2.5 px-4 rounded-lg text-xs font-semibold tracking-wide transition flex items-center justify-center gap-2 shadow-md shadow-indigo-900/20">
+          <button className="flex-1 md:flex-none bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 text-white py-2 px-4 rounded-lg text-xs font-semibold tracking-wide transition flex items-center justify-center gap-2 shadow-md shadow-indigo-900/20">
             <span>📥</span>
             Скачать отчёт С3 в Excel
           </button>
