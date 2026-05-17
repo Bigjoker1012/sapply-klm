@@ -23,7 +23,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'CRITICAL' | 'TRANSFER'>('ALL');
 
-  // Исходные данные таблицы (как на твоем идеальном макете!)
+  // Исходные данные таблицы
   const [inventory, setInventory] = useState<InventoryItem[]>([
     { id: 'RAW_001', name: 'Витамин А 1000', polotsk: 111.6, lipki: 0, inTransit: 500, free: -45.3, status: 'СРОЧНО ЗАКУПАТЬ' },
     { id: 'RAW_002', name: 'Витамин Д3 500', polotsk: 46.8, lipki: 200, inTransit: 0, free: 120.5, status: 'ПЕРЕВЕЗТИ С ЛИП' },
@@ -55,7 +55,6 @@ export default function App() {
 
     setTransits([...transits, newTransit]);
 
-    // Синхронизируем вес "В пути" с главной таблицей
     setInventory(prev => prev.map(item => {
       if (item.name === selectedMaterial) {
         const newTransitSum = item.inTransit + Number(transitAmount);
@@ -68,7 +67,6 @@ export default function App() {
       return item;
     }));
 
-    // Сбрасываем форму
     setTransitAmount('');
     setTransitDate('');
   };
@@ -89,7 +87,6 @@ export default function App() {
     }));
   };
 
-  // Красивый вывод даты dd.mm.yyyy
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
@@ -99,7 +96,6 @@ export default function App() {
     return `${day}.${month}.${year}`;
   };
 
-  // Фильтрация строк
   const filteredInventory = useMemo(() => {
     return inventory.filter(item => {
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -276,7 +272,7 @@ export default function App() {
         <div className="bg-[#0b101c] rounded-lg p-3 border border-slate-800 flex flex-wrap gap-2 items-center text-xs text-slate-300">
           <span className="text-amber-500 font-bold">⚡ Текущий транзит:</span>
           {transits.length === 0 ? (
-            <span className="text-slate-500">Нет активных поставок в пути</span>
+            <span className="text-slate-500">Нет active-поставок в пути</span>
           ) : (
             transits.map(t => (
               <div key={t.id} className="bg-[#162137] px-3 py-1 rounded-md border border-slate-700/50 flex items-center gap-2">
@@ -419,7 +415,7 @@ export default function App() {
         </div>
 
         <div className="flex flex-wrap gap-3 w-full md:w-auto justify-end">
-          <button className="flex-1 md:flex-none bg-[#18233a] hover:bg-[#202f4e] border border-slate-700 text-slate-300 hover:text-white py-2 px-4 rounded-lg text-xs font-medium transition flex items-center justify-center gap-2">
+          <button className="flex-1 md:flex-none bg-[#18233a] hover:bg-[#202f4e] border border-slate-700 text-slate-300 hover:text-white py-2.5 px-4 rounded-lg text-xs font-medium transition flex items-center justify-center gap-2">
             <span>🔗</span>
             Открыть базу синонимов (Мэппинг)
           </button>
@@ -429,7 +425,7 @@ export default function App() {
             База Google Sheets: СВЯЗАНО
           </div>
 
-          <button className="flex-1 md:flex-none bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 text-white py-2 px-4 rounded-lg text-xs font-semibold tracking-wide transition flex items-center justify-center gap-2 shadow-md shadow-indigo-900/20">
+          <button className="flex-1 md:flex-none bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 text-white py-2.5 px-4 rounded-lg text-xs font-semibold tracking-wide transition flex items-center justify-center gap-2 shadow-md shadow-indigo-900/20">
             <span>📥</span>
             Скачать отчёт С3 в Excel
           </button>
