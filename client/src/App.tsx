@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
 // Описание структуры данных для таблицы
 interface InventoryItem {
@@ -19,6 +19,48 @@ interface TransitItem {
 }
 
 export default function App() {
+  // Динамически внедряем стили Tailwind и кастомный темный фон при запуске приложения.
+  // Это гарантирует, что даже если сборщик на Railway не скомпилировал CSS, 
+  // браузер сам на лету нарисует красивую темную админку!
+  useEffect(() => {
+    // Подключаем Tailwind Play CDN
+    const script = document.createElement('script');
+    script.src = 'https://cdn.tailwindcss.com';
+    document.head.appendChild(script);
+
+    // Добавляем глобальные стили для красивых скроллбаров и темного фона по умолчанию
+    const style = document.createElement('style');
+    style.innerHTML = `
+      body {
+        background-color: #0b0f19 !important;
+        color: #f1f5f9 !important;
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #111827;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #374151;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #4b5563;
+      }
+    `;
+    document.head.appendChild(style);
+
+    return () => {
+      // Чистим за собой при размонтировании
+      if (document.head.contains(script)) document.head.removeChild(script);
+      if (document.head.contains(style)) document.head.removeChild(style);
+    };
+  }, []);
+
   // Поиск и фильтрация таблицы
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'CRITICAL' | 'TRANSFER'>('ALL');
