@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 
-// Описание структуры данных для таблицы
+// Описание структуры данных
 interface InventoryItem {
   id: string;
   name: string;
@@ -19,53 +19,11 @@ interface TransitItem {
 }
 
 export default function App() {
-  // Динамически внедряем стили Tailwind и кастомный темный фон при запуске приложения.
-  // Это гарантирует, что даже если сборщик на Railway не скомпилировал CSS, 
-  // браузер сам на лету нарисует красивую темную админку!
-  useEffect(() => {
-    // Подключаем Tailwind Play CDN
-    const script = document.createElement('script');
-    script.src = 'https://cdn.tailwindcss.com';
-    document.head.appendChild(script);
-
-    // Добавляем глобальные стили для красивых скроллбаров и темного фона по умолчанию
-    const style = document.createElement('style');
-    style.innerHTML = `
-      body {
-        background-color: #0b0f19 !important;
-        color: #f1f5f9 !important;
-        margin: 0;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      }
-      ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #111827;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #374151;
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #4b5563;
-      }
-    `;
-    document.head.appendChild(style);
-
-    return () => {
-      // Чистим за собой при размонтировании
-      if (document.head.contains(script)) document.head.removeChild(script);
-      if (document.head.contains(style)) document.head.removeChild(style);
-    };
-  }, []);
-
   // Поиск и фильтрация таблицы
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'CRITICAL' | 'TRANSFER'>('ALL');
 
-  // Исходные данные таблицы (в точности как на твоем макете!)
+  // Исходные данные таблицы (в точности как на макете!)
   const [inventory, setInventory] = useState<InventoryItem[]>([
     { id: 'RAW_001', name: 'Витамин А 1000', polotsk: 111.6, lipki: 0, inTransit: 500, free: -45.3, status: 'СРОЧНО ЗАКУПАТЬ' },
     { id: 'RAW_002', name: 'Витамин Д3 500', polotsk: 46.8, lipki: 200, inTransit: 0, free: 120.5, status: 'ПЕРЕВЕЗТИ С ЛИП' },
@@ -78,12 +36,12 @@ export default function App() {
     { id: '1', name: 'Витамин А 1000', amount: 500, date: '20.05.2026' }
   ]);
 
-  // Состояния для формы ручного ввода транзита
+  // Состояния формы транзита
   const [selectedMaterial, setSelectedMaterial] = useState('');
   const [transitAmount, setTransitAmount] = useState('');
   const [transitDate, setTransitDate] = useState('');
 
-  // Обработчик добавления поставки в пути
+  // Обработчик добавления транзита
   const handleAddTransit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedMaterial || !transitAmount || !transitDate) return;
@@ -154,123 +112,707 @@ export default function App() {
   }, [inventory, searchQuery, activeFilter]);
 
   return (
-    <div className="min-h-screen bg-[#0b0f19] text-slate-100 p-4 sm:p-6 font-sans antialiased">
-      
+    <div className="erp-app">
+      {/* Встроенные стили для идеальной пиксель-в-пиксель точности без зависимостей */}
+      <style>{`
+        .erp-app {
+          background-color: #0b0f19;
+          color: #f1f5f9;
+          font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+          padding: 1.5rem;
+          min-h: 100vh;
+          box-sizing: border-box;
+        }
+        .erp-app * {
+          box-sizing: border-box;
+        }
+        
+        /* HEADER */
+        .erp-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background-color: #151f32;
+          border: 1px solid #1e293b;
+          border-radius: 0.75rem;
+          padding: 1rem 1.5rem;
+          margin-bottom: 1.5rem;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .header-title-wrapper {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+        .header-logo {
+          font-size: 1.5rem;
+        }
+        .header-title {
+          font-size: 1.25rem;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin: 0;
+        }
+        .accent-green {
+          color: #10b981;
+        }
+        .header-meta {
+          display: flex;
+          gap: 1.5rem;
+          font-size: 0.875rem;
+          color: #94a3b8;
+        }
+        .meta-item {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .meta-badge {
+          background-color: #1e293b;
+          color: #e2e8f0;
+          padding: 0.25rem 0.625rem;
+          border-radius: 0.375rem;
+          font-family: monospace;
+          font-size: 0.75rem;
+        }
+
+        /* SECTION TILES */
+        .section-header {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: #94a3b8;
+          margin-bottom: 0.75rem;
+        }
+        .section-header span {
+          color: #64748b;
+        }
+
+        /* CARD GRID & CARDS */
+        .cards-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+          gap: 1rem;
+          margin-bottom: 1.5rem;
+        }
+        .card {
+          background-color: #111a2e;
+          border-radius: 0.75rem;
+          padding: 1.25rem;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          transition: border-color 0.2s, box-shadow 0.2s;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+          min-height: 200px;
+        }
+        .card-polotsk { border: 1px solid rgba(16, 185, 129, 0.2); }
+        .card-polotsk:hover { border-color: rgba(16, 185, 129, 0.5); }
+        .card-minsk { border: 1px solid rgba(245, 158, 11, 0.2); }
+        .card-minsk:hover { border-color: rgba(245, 158, 11, 0.5); }
+        .card-recipe { border: 1px solid rgba(14, 165, 233, 0.2); }
+        .card-recipe:hover { border-color: rgba(14, 165, 233, 0.5); }
+
+        .card-top {
+          margin-bottom: 1rem;
+        }
+        .card-header-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 0.5rem;
+        }
+        .card-title-group {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .card-title-group span {
+          font-size: 1.25rem;
+        }
+        .card-title {
+          font-weight: 700;
+          font-size: 0.95rem;
+          color: #f1f5f9;
+          margin: 0;
+        }
+        .format-badge {
+          font-size: 0.7rem;
+          font-weight: 700;
+          padding: 0.125rem 0.375rem;
+          border-radius: 0.25rem;
+          font-family: monospace;
+        }
+        .badge-green { background-color: rgba(16, 185, 129, 0.1); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.2); }
+        .badge-amber { background-color: rgba(245, 158, 11, 0.1); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.2); }
+        .badge-sky { background-color: rgba(14, 165, 233, 0.1); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.2); }
+
+        .filename-box {
+          font-size: 0.75rem;
+          color: #94a3b8;
+          background-color: rgba(15, 23, 42, 0.6);
+          padding: 0.5rem;
+          border-radius: 0.375rem;
+          border: 1px solid #1e293b;
+          margin-bottom: 0.75rem;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .status-indicator {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.75rem;
+          color: #cbd5e1;
+        }
+        .dot {
+          height: 0.5rem;
+          width: 0.5rem;
+          border-radius: 50%;
+          display: inline-block;
+        }
+        .dot-green { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+        .dot-amber { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+        .dot-sky { background-color: #0ea5e9; }
+
+        /* BUTTONS */
+        .btn {
+          width: 100%;
+          border: none;
+          border-radius: 0.5rem;
+          padding: 0.625rem 1rem;
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .btn-card-green {
+          background-color: rgba(16, 185, 129, 0.1);
+          color: #34d399;
+          border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        .btn-card-green:hover {
+          background-color: #10b981;
+          color: #ffffff;
+          border-color: #10b981;
+          box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+        }
+        .btn-card-amber {
+          background-color: rgba(245, 158, 11, 0.1);
+          color: #fbbf24;
+          border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        .btn-card-amber:hover {
+          background-color: #f59e0b;
+          color: #ffffff;
+          border-color: #f59e0b;
+          box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+        }
+        .btn-card-sky {
+          background-color: rgba(14, 165, 233, 0.1);
+          color: #38bdf8;
+          border: 1px solid rgba(14, 165, 233, 0.3);
+        }
+        .btn-card-sky:hover {
+          background-color: #0ea5e9;
+          color: #ffffff;
+          border-color: #0ea5e9;
+          box-shadow: 0 0 12px rgba(14, 165, 233, 0.4);
+        }
+
+        /* IN TRANSIT SECTION */
+        .transit-section {
+          background-color: #111a2e;
+          border: 1px solid #1e293b;
+          border-radius: 0.75rem;
+          padding: 1.25rem;
+          margin-bottom: 1.5rem;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .transit-form {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 1rem;
+          align-items: flex-end;
+          margin-bottom: 1rem;
+        }
+        .form-group {
+          display: flex;
+          flex-direction: column;
+          gap: 0.375rem;
+        }
+        .form-label {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: #94a3b8;
+        }
+        .input-dark {
+          background-color: #18233a;
+          border: 1px solid #334155;
+          border-radius: 0.5rem;
+          padding: 0.5rem 0.75rem;
+          color: #f1f5f9;
+          font-size: 0.875rem;
+          width: 100%;
+          outline: none;
+          transition: border-color 0.2s;
+        }
+        .input-dark:focus {
+          border-color: #64748b;
+        }
+        .btn-submit {
+          background-color: #1e293b;
+          color: #f1f5f9;
+          border: 1px solid #334155;
+          padding: 0.55rem 1rem;
+          border-radius: 0.5rem;
+          font-size: 0.825rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .btn-submit:hover {
+          background-color: #334155;
+          border-color: #475569;
+        }
+        .transit-display-box {
+          background-color: #0b101c;
+          border: 1px solid #1e293b;
+          border-radius: 0.5rem;
+          padding: 0.75rem;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.75rem;
+        }
+        .transit-title {
+          color: #fbbf24;
+          font-weight: 700;
+          margin-right: 0.25rem;
+        }
+        .transit-tag {
+          background-color: #162137;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          padding: 0.25rem 0.5rem;
+          border-radius: 0.375rem;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .btn-delete-tag {
+          background: none;
+          border: none;
+          color: #ef4444;
+          cursor: pointer;
+          font-weight: 700;
+          padding: 0;
+          font-size: 0.75rem;
+        }
+        .btn-delete-tag:hover {
+          color: #f87171;
+        }
+
+        /* MONITOR SECTION */
+        .monitor-section {
+          background-color: #111a2e;
+          border: 1px solid #1e293b;
+          border-radius: 0.75rem;
+          padding: 1.25rem;
+          margin-bottom: 1.5rem;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .monitor-bar {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          margin-bottom: 1rem;
+          padding-bottom: 1rem;
+          border-bottom: 1px solid #1e293b;
+        }
+        @media (min-width: 1024px) {
+          .monitor-bar {
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+          }
+        }
+        .filter-group {
+          background-color: #0b101c;
+          border: 1px solid #1e293b;
+          border-radius: 0.5rem;
+          padding: 0.25rem;
+          display: flex;
+          gap: 0.25rem;
+        }
+        .btn-filter {
+          background: none;
+          border: none;
+          color: #94a3b8;
+          font-size: 0.75rem;
+          font-weight: 600;
+          padding: 0.375rem 0.75rem;
+          border-radius: 0.375rem;
+          cursor: pointer;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          gap: 0.375rem;
+        }
+        .btn-filter:hover {
+          color: #f1f5f9;
+        }
+        .btn-filter.active-all {
+          background-color: #1e293b;
+          color: #ffffff;
+          border: 1px solid #334155;
+        }
+        .btn-filter.active-critical {
+          background-color: rgba(239, 68, 68, 0.15);
+          color: #f87171;
+          border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .btn-filter.active-transfer {
+          background-color: rgba(245, 158, 11, 0.15);
+          color: #fbbf24;
+          border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        .filter-dot {
+          height: 0.375rem;
+          width: 0.375rem;
+          border-radius: 50%;
+        }
+        .filter-dot-red { background-color: #ef4444; }
+        .filter-dot-amber { background-color: #f59e0b; }
+
+        .search-wrapper {
+          position: relative;
+        }
+        .search-input {
+          background-color: #18233a;
+          border: 1px solid #334155;
+          border-radius: 0.5rem;
+          padding: 0.45rem 0.75rem 0.45rem 2rem;
+          color: #f1f5f9;
+          font-size: 0.75rem;
+          width: 180px;
+          outline: none;
+          transition: border-color 0.2s;
+        }
+        .search-input:focus {
+          border-color: #64748b;
+        }
+        .search-icon {
+          position: absolute;
+          left: 0.75rem;
+          top: 50%;
+          transform: translateY(-50%);
+          font-size: 0.75rem;
+          color: #64748b;
+        }
+
+        /* TABLE */
+        .table-responsive {
+          overflow-x: auto;
+          background-color: #0a0f1d;
+          border-radius: 0.5rem;
+          border: 1px solid #1e293b;
+        }
+        .erp-table {
+          width: 100%;
+          border-collapse: collapse;
+          text-align: left;
+          font-size: 0.75rem;
+        }
+        .erp-table th {
+          background-color: #131d33;
+          border-b: 1px solid #1e293b;
+          padding: 0.75rem 1rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: #94a3b8;
+        }
+        .erp-table td {
+          padding: 0.75rem 1rem;
+          border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+          vertical-align: middle;
+        }
+        
+        /* Row Status Styling */
+        .row-critical { background-color: rgba(239, 68, 68, 0.05); }
+        .row-critical:hover { background-color: rgba(239, 68, 68, 0.1); }
+        .row-transfer { background-color: rgba(245, 158, 11, 0.03); }
+        .row-transfer:hover { background-color: rgba(245, 158, 11, 0.07); }
+        .row-normal { background-color: rgba(16, 185, 129, 0.02); }
+        .row-normal:hover { background-color: rgba(16, 185, 129, 0.06); }
+        .row-control:hover { background-color: rgba(255, 255, 255, 0.02); }
+
+        .cell-mono {
+          font-family: monospace;
+          color: #94a3b8;
+          font-size: 0.7rem;
+        }
+        .cell-bold {
+          font-weight: 700;
+          color: #f1f5f9;
+        }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+
+        /* Status Badges */
+        .status-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.375rem;
+          padding: 0.25rem 0.625rem;
+          border-radius: 9999px;
+          font-size: 0.65rem;
+          font-weight: 700;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+        .status-badge-critical {
+          background-color: rgba(239, 68, 68, 0.15);
+          color: #f87171;
+          border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .badge-pulse {
+          height: 0.375rem;
+          width: 0.375rem;
+          background-color: #ef4444;
+          border-radius: 50%;
+          animation: pulse 1.5s infinite;
+        }
+        .status-badge-transfer {
+          background-color: rgba(245, 158, 11, 0.15);
+          color: #fbbf24;
+          border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        .status-badge-normal {
+          background-color: rgba(16, 185, 129, 0.15);
+          color: #34d399;
+          border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        .status-badge-control {
+          background-color: rgba(249, 115, 22, 0.15);
+          color: #fb923c;
+          border: 1px solid rgba(249, 115, 22, 0.3);
+        }
+
+        @keyframes pulse {
+          0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+          70% { transform: scale(1); box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+          100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        /* SYSTEM CONTROLS FOOTER */
+        .system-footer {
+          background-color: #111a2e;
+          border: 1px solid #1e293b;
+          border-radius: 0.75rem;
+          padding: 1rem 1.25rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          align-items: center;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        @media (min-width: 768px) {
+          .system-footer {
+            flex-direction: row;
+            justify-content: space-between;
+          }
+        }
+        .footer-left {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: #94a3b8;
+        }
+        .footer-buttons {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.75rem;
+          width: 100%;
+        }
+        @media (min-width: 768px) {
+          .footer-buttons {
+            width: auto;
+            justify-content: flex-end;
+          }
+        }
+        .btn-footer {
+          flex: 1;
+          background-color: #18233a;
+          color: #cbd5e1;
+          border: 1px solid #334155;
+          padding: 0.5rem 1rem;
+          border-radius: 0.5rem;
+          font-size: 0.75rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          white-space: nowrap;
+        }
+        .btn-footer:hover {
+          background-color: #202f4e;
+          color: #ffffff;
+        }
+        .badge-sheets {
+          flex: 1;
+          background-color: rgba(16, 185, 129, 0.1);
+          border: 1px solid rgba(16, 185, 129, 0.3);
+          color: #34d399;
+          padding: 0.5rem 1rem;
+          border-radius: 0.5rem;
+          font-size: 0.75rem;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          white-space: nowrap;
+        }
+        .btn-excel {
+          flex: 1;
+          background-color: #4f46e5;
+          color: #ffffff;
+          border: 1px solid rgba(79, 70, 229, 0.3);
+          padding: 0.5rem 1rem;
+          border-radius: 0.5rem;
+          font-size: 0.75rem;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          white-space: nowrap;
+          box-shadow: 0 4px 10px rgba(79, 70, 229, 0.2);
+        }
+        .btn-excel:hover {
+          background-color: #4338ca;
+          box-shadow: 0 4px 14px rgba(79, 70, 229, 0.4);
+        }
+      `}</style>
+
       {/* ШАПКА ПАНЕЛИ */}
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-[#151f32] border border-slate-800 rounded-xl px-6 py-4 mb-6 shadow-lg gap-4">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🏭</span>
-          <h1 className="text-lg sm:text-xl font-bold tracking-wider text-slate-100 uppercase">
-            Пром-Закупка: <span className="text-emerald-400">Премиксы</span>
+      <header className="erp-header">
+        <div className="header-title-wrapper">
+          <span className="header-logo">🏭</span>
+          <h1 className="header-title">
+            Пром-Закупка: <span className="accent-green">Премиксы</span>
           </h1>
         </div>
-        <div className="flex items-center gap-6 text-sm text-slate-400">
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500">👤</span>
-            <span>С3: <strong className="text-slate-200">Алексей</strong></span>
+        <div className="header-meta">
+          <div className="meta-item">
+            <span>👤</span>
+            <span>С3: <strong>Алексей</strong></span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500">📅</span>
-            <span className="bg-slate-800 text-slate-300 px-2.5 py-1 rounded-md text-xs font-mono">17.05.2026</span>
+          <div className="meta-item">
+            <span>📅</span>
+            <span className="meta-badge">17.05.2026</span>
           </div>
         </div>
       </header>
 
-      {/* ЗАГРУЗКА ДОКУМЕНТОВ */}
-      <section className="mb-6">
-        <div className="flex items-center gap-2 mb-3 px-1 text-slate-400 text-xs sm:text-sm uppercase font-semibold tracking-wider">
-          <span>📥</span>
-          <h2>Панель загрузки документов <span className="text-slate-500 font-normal">(Входные данные)</span></h2>
+      {/* ПАНЕЛЬ ЗАГРУЗКИ ДОКУМЕНТОВ */}
+      <section style={{ marginBottom: '1.5rem' }}>
+        <div className="section-header">
+          <span>📥</span> Панель загрузки документов <span>(Входные данные)</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          
+        <div className="cards-grid">
           {/* ПОЛОЦК */}
-          <div className="bg-[#111a2e] border border-emerald-500/30 rounded-xl p-5 hover:border-emerald-500/50 transition shadow-md flex flex-col justify-between">
-            <div>
-              <div className="flex justify-between items-start mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">📁</span>
-                  <h3 className="font-bold text-slate-200">ПОЛОЦК КХП (Остатки)</h3>
+          <div className="card card-polotsk">
+            <div className="card-top">
+              <div className="card-header-row">
+                <div className="card-title-group">
+                  <span>📁</span>
+                  <h3 className="card-title">ПОЛОЦК КХП (Остатки)</h3>
                 </div>
-                <span className="text-xs bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 font-mono">XLS</span>
+                <span className="format-badge badge-green">XLS</span>
               </div>
-              <p className="text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800 mb-3 truncate">
-                [Премикс Амбарка 13.05.26..(3).xls]
-              </p>
-              <div className="flex items-center gap-2 text-xs text-slate-300 mb-4">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <div className="filename-box">[Премикс Амбарка 13.05.26..(3).xls]</div>
+              <div className="status-indicator">
+                <span className="dot dot-green"></span>
                 <span>Загружено сегодня в 08:15</span>
               </div>
             </div>
-            <button className="w-full bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/40 hover:border-emerald-500 text-emerald-300 hover:text-white py-2.5 px-4 rounded-lg font-medium text-xs tracking-wider transition uppercase">
-              КНОПКА: Спарсить и обновить
-            </button>
+            <button className="btn btn-card-green">КНОПКА: Спарсить и обновить</button>
           </div>
 
           {/* 1С МИНСК */}
-          <div className="bg-[#111a2e] border border-amber-500/30 rounded-xl p-5 hover:border-amber-500/50 transition shadow-md flex flex-col justify-between">
-            <div>
-              <div className="flex justify-between items-start mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">🏢</span>
-                  <h3 className="font-bold text-slate-200">1С МИНСК (Липки)</h3>
+          <div className="card card-minsk">
+            <div className="card-top">
+              <div className="card-header-row">
+                <div className="card-title-group">
+                  <span>🏢</span>
+                  <h3 className="card-title">1С МИНСК (Липки)</h3>
                 </div>
-                <span className="text-xs bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20 font-mono">XLSX</span>
+                <span className="format-badge badge-amber">XLSX</span>
               </div>
-              <p className="text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800 mb-3 truncate">
-                [07.05.2026 Полоцк Расход сырья_2.xlsx]
-              </p>
-              <div className="flex items-center gap-2 text-xs text-slate-300 mb-4">
-                <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
+              <div className="filename-box">[07.05.2026 Полоцк Расход сырья_2.xlsx]</div>
+              <div className="status-indicator">
+                <span className="dot dot-amber"></span>
                 <span>Обновлено сегодня в 09:00</span>
               </div>
             </div>
-            <button className="w-full bg-amber-600/20 hover:bg-amber-600 border border-amber-500/40 hover:border-amber-500 text-amber-300 hover:text-white py-2.5 px-4 rounded-lg font-medium text-xs tracking-wider transition uppercase">
-              КНОПКА: Синхронизировать
-            </button>
+            <button className="btn btn-card-amber">КНОПКА: Синхронизировать</button>
           </div>
 
           {/* РЕЦЕПТ */}
-          <div className="bg-[#111a2e] border border-sky-500/30 rounded-xl p-5 hover:border-sky-500/50 transition shadow-md flex flex-col justify-between">
-            <div>
-              <div className="flex justify-between items-start mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">📜</span>
-                  <h3 className="font-bold text-slate-200">РЕЦЕПТ ТЕХНОЛОГА</h3>
+          <div className="card card-recipe">
+            <div className="card-top">
+              <div className="card-header-row">
+                <div className="card-title-group">
+                  <span>📜</span>
+                  <h3 className="card-title">РЕЦЕПТ ТЕХНОЛОГА</h3>
                 </div>
-                <span className="text-xs bg-sky-500/10 text-sky-400 px-2 py-0.5 rounded border border-sky-500/20 font-mono">PDF</span>
+                <span className="format-badge badge-sky">PDF</span>
               </div>
-              <p className="text-xs text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-800 mb-3 truncate">
-                [Рецепты ПЛЦ №105.pdf]
-              </p>
-              <div className="flex items-center gap-2 text-xs text-slate-300 mb-4">
-                <span className="h-2 w-2 rounded-full bg-sky-500"></span>
-                <span>Последний: <strong className="text-sky-300">ПЛЦ №105 (Вчера)</strong></span>
+              <div className="filename-box">[Рецепты ПЛЦ №105.pdf]</div>
+              <div className="status-indicator">
+                <span className="dot dot-sky"></span>
+                <span>Последний: <strong>ПЛЦ №105 (Вчера)</strong></span>
               </div>
             </div>
-            <button className="w-full bg-sky-600/20 hover:bg-sky-600 border border-sky-500/40 hover:border-sky-500 text-sky-300 hover:text-white py-2.5 px-4 rounded-lg font-medium text-xs tracking-wider transition uppercase">
-              КНОПКА: Разобрать на строки
-            </button>
+            <button className="btn btn-card-sky">КНОПКА: Разобрать на строки</button>
           </div>
-
         </div>
       </section>
 
       {/* СЫРЬЁ В ПУТИ */}
-      <section className="mb-6 bg-[#111a2e] border border-slate-850 rounded-xl p-5 shadow-lg">
-        <div className="flex items-center gap-2 mb-4 text-slate-400 text-xs sm:text-sm uppercase font-semibold tracking-wider">
-          <span>🚚</span>
-          <h2>Сырьё в пути <span className="text-slate-500 font-normal">(Ручной ввод)</span></h2>
+      <section className="transit-section">
+        <div className="section-header">
+          <span>🚚</span> Сырьё в пути <span>(Ручной ввод)</span>
         </div>
 
-        <form onSubmit={handleAddTransit} className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end mb-4">
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5 font-medium">Выбрать сырье:</label>
+        <form onSubmit={handleAddTransit} className="transit-form">
+          <div className="form-group">
+            <label className="form-label">Выбрать сырье:</label>
             <select 
               value={selectedMaterial}
               onChange={(e) => setSelectedMaterial(e.target.value)}
-              className="w-full bg-[#18233a] border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-slate-500 transition"
+              className="input-dark"
               required
             >
               <option value="">Выберите из списка...</option>
@@ -280,49 +822,45 @@ export default function App() {
             </select>
           </div>
 
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5 font-medium">Количество, кг:</label>
+          <div className="form-group">
+            <label className="form-label">Количество, кг:</label>
             <input 
               type="number" 
               placeholder="Введите вес"
               value={transitAmount}
               onChange={(e) => setTransitAmount(e.target.value)}
-              className="w-full bg-[#18233a] border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-slate-500 transition"
+              className="input-dark"
               required
             />
           </div>
 
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5 font-medium">Дата прихода:</label>
+          <div className="form-group">
+            <label className="form-label">Дата прихода:</label>
             <input 
               type="date"
               value={transitDate}
               onChange={(e) => setTransitDate(e.target.value)}
-              className="w-full bg-[#18233a] border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-slate-500 transition"
+              className="input-dark"
               required
             />
           </div>
 
-          <button 
-            type="submit"
-            className="w-full bg-[#1e293b] hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-slate-200 py-2 rounded-lg text-sm font-semibold transition"
-          >
-            + Добавить поставку
-          </button>
+          <button type="submit" className="btn-submit">+ Добавить поставку</button>
         </form>
 
-        <div className="bg-[#0b101c] rounded-lg p-3 border border-slate-800 flex flex-wrap gap-2 items-center text-xs text-slate-300">
-          <span className="text-amber-500 font-bold">⚡ Текущий транзит:</span>
+        <div className="transit-display-box">
+          <span className="transit-title">⚡ Текущий транзит:</span>
           {transits.length === 0 ? (
-            <span className="text-slate-500">Нет active-поставок в пути</span>
+            <span style={{ color: '#64748b' }}>Нет активных поставок в пути</span>
           ) : (
             transits.map(t => (
-              <div key={t.id} className="bg-[#162137] px-3 py-1 rounded-md border border-slate-700/50 flex items-center gap-2">
+              <div key={t.id} className="transit-tag">
                 <span>• {t.name} ({t.amount} кг) — ожидается {t.date}</span>
                 <button 
                   type="button" 
                   onClick={() => handleDeleteTransit(t.id, t.name, t.amount)}
-                  className="text-red-400 hover:text-red-300 font-bold ml-1"
+                  className="btn-delete-tag"
+                  title="Удалить транзит"
                 >
                   [❌ Удалить]
                 </button>
@@ -333,112 +871,132 @@ export default function App() {
       </section>
 
       {/* МОНИТОР ДЕФИЦИТА */}
-      <section className="bg-[#111a2e] border border-slate-850 rounded-xl p-5 shadow-lg mb-6">
-        
-        <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-4 mb-5 pb-4 border-b border-slate-800">
-          <div className="flex items-center gap-2 text-slate-400 text-xs sm:text-sm uppercase font-semibold tracking-wider">
-            <span>📊</span>
-            <h2>Монитор дефицита и контроля позиций <span className="text-slate-500 font-normal">(Аналитика на лету)</span></h2>
+      <section className="monitor-section">
+        <div className="monitor-bar">
+          <div className="section-header" style={{ marginBottom: 0 }}>
+            <span>📊</span> Монитор дефицита и контроля позиций <span>(Аналитика на лету)</span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="bg-[#0b101c] p-1 rounded-lg border border-slate-800 flex gap-1">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
+            {/* Группа фильтров */}
+            <div className="filter-group">
               <button 
                 onClick={() => setActiveFilter('ALL')}
-                className={`px-3 py-1 rounded text-xs font-medium transition ${activeFilter === 'ALL' ? 'bg-slate-800 text-white border border-slate-700' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`btn-filter ${activeFilter === 'ALL' ? 'active-all' : ''}`}
               >
                 Все позиции
               </button>
               <button 
                 onClick={() => setActiveFilter('CRITICAL')}
-                className={`px-3 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition ${activeFilter === 'CRITICAL' ? 'bg-red-950 text-red-300 border border-red-900/50' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`btn-filter ${activeFilter === 'CRITICAL' ? 'active-critical' : ''}`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500"></span>
+                <span className="filter-dot filter-dot-red"></span>
                 Срочно закупать
               </button>
               <button 
                 onClick={() => setActiveFilter('TRANSFER')}
-                className={`px-3 py-1 rounded text-xs font-medium flex items-center gap-1.5 transition ${activeFilter === 'TRANSFER' ? 'bg-amber-950 text-amber-300 border border-amber-900/50' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`btn-filter ${activeFilter === 'TRANSFER' ? 'active-transfer' : ''}`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                <span className="filter-dot filter-dot-amber"></span>
                 Перевезти с Липковской
               </button>
             </div>
 
-            <div className="relative">
+            {/* Поиск */}
+            <div className="search-wrapper">
+              <span className="search-icon">🔍</span>
               <input 
                 type="text" 
                 placeholder="Поиск сырья..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-[#18233a] border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-slate-500 transition placeholder:text-slate-500 w-44"
+                className="search-input"
               />
-              <span className="absolute left-2.5 top-2 text-slate-500 text-xs">🔍</span>
             </div>
           </div>
         </div>
 
         {/* ТАБЛИЦА */}
-        <div className="overflow-x-auto rounded-lg border border-slate-800 bg-[#0a0f1d]">
-          <table className="w-full text-left border-collapse">
+        <div className="table-responsive">
+          <table className="erp-table">
             <thead>
-              <tr className="bg-[#131d33] border-b border-slate-800 text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-                <th className="py-3 px-4 w-16 text-center">ID</th>
-                <th className="py-3 px-4">Системное имя</th>
-                <th className="py-3 px-4 text-right">Полоцк КХП, кг</th>
-                <th className="py-3 px-4 text-right">Липки (Минск)</th>
-                <th className="py-3 px-4 text-right">В пути, кг</th>
-                <th className="py-3 px-4 text-right">Свободный, кг</th>
-                <th className="py-3 px-4 text-center w-52">Текущий статус</th>
+              <tr>
+                <th className="text-center" style={{ width: '60px' }}>ID</th>
+                <th>Системное имя</th>
+                <th className="text-right">Полоцк КХП, кг</th>
+                <th className="text-right">Липки (Минск)</th>
+                <th className="text-right">В пути, кг</th>
+                <th className="text-right">Свободный, кг</th>
+                <th className="text-center" style={{ width: '200px' }}>Текущий статус</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 text-xs font-medium">
+            <tbody>
               {filteredInventory.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-8 text-slate-500">
+                  <td colSpan={7} className="text-center" style={{ padding: '2rem', color: '#64748b' }}>
                     Данные отсутствуют или не найдены по фильтру
                   </td>
                 </tr>
               ) : (
                 filteredInventory.map((item) => {
-                  let rowBg = 'hover:bg-slate-800/20';
-                  let statusBadge = '';
-                  let freeColorClass = 'text-slate-200';
+                  let rowClass = 'row-control';
+                  let statusBadgeMarkup = null;
+                  let freeColorStyle = {};
 
                   if (item.status === 'СРОЧНО ЗАКУПАТЬ') {
-                    rowBg = 'bg-red-950/15 hover:bg-red-950/25';
-                    statusBadge = 'bg-red-500/15 text-red-400 border border-red-500/30';
-                    freeColorClass = 'text-red-400 font-bold';
+                    rowClass = 'row-critical';
+                    freeColorStyle = { color: '#f87171', fontWeight: 'bold' };
+                    statusBadgeMarkup = (
+                      <span className="status-badge status-badge-critical">
+                        <span className="badge-pulse"></span>
+                        СРОЧНО ЗАКУПАТЬ
+                      </span>
+                    );
                   } else if (item.status === 'ПЕРЕВЕЗТИ С ЛИП') {
-                    rowBg = 'bg-amber-950/10 hover:bg-amber-950/20';
-                    statusBadge = 'bg-amber-500/15 text-amber-400 border border-amber-500/30';
-                    freeColorClass = 'text-amber-400';
+                    rowClass = 'row-transfer';
+                    freeColorStyle = { color: '#fbbf24' };
+                    statusBadgeMarkup = (
+                      <span className="status-badge status-badge-transfer">
+                        <span className="filter-dot filter-dot-amber" style={{ display: 'inline-block' }}></span>
+                        ПЕРЕВЕЗТИ С ЛИП
+                      </span>
+                    );
                   } else if (item.status === 'ЗАПАС В НОРМЕ') {
-                    rowBg = 'bg-emerald-950/10 hover:bg-emerald-950/20';
-                    statusBadge = 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
-                    freeColorClass = 'text-emerald-400';
+                    rowClass = 'row-normal';
+                    freeColorStyle = { color: '#34d399' };
+                    statusBadgeMarkup = (
+                      <span className="status-badge status-badge-normal">
+                        <span className="filter-dot" style={{ backgroundColor: '#10b981', display: 'inline-block' }}></span>
+                        ЗАПАС В НОРМЕ
+                      </span>
+                    );
                   } else if (item.status === 'НА КОНТРОЛЕ') {
-                    rowBg = 'bg-slate-800/10 hover:bg-slate-800/20';
-                    statusBadge = 'bg-orange-500/15 text-orange-400 border border-orange-500/30';
+                    statusBadgeMarkup = (
+                      <span className="status-badge status-badge-control">
+                        <span className="filter-dot" style={{ backgroundColor: '#f97316', display: 'inline-block' }}></span>
+                        НА КОНТРОЛЕ
+                      </span>
+                    );
                   }
 
                   return (
-                    <tr key={item.id} className={`transition-colors ${rowBg}`}>
-                      <td className="py-3 px-4 text-center text-slate-500 font-mono text-[10px]">{item.id}</td>
-                      <td className="py-3 px-4 text-slate-200 font-semibold">{item.name}</td>
-                      <td className="py-3 px-4 text-right font-mono text-slate-300">{item.polotsk.toLocaleString('ru-RU')}</td>
-                      <td className="py-3 px-4 text-right font-mono text-slate-300">{item.lipki.toLocaleString('ru-RU')}</td>
-                      <td className="py-3 px-4 text-right font-mono text-slate-400">{item.inTransit > 0 ? `+${item.inTransit.toLocaleString('ru-RU')}` : '0'}</td>
-                      <td className={`py-3 px-4 text-right font-mono ${freeColorClass}`}>{item.free.toLocaleString('ru-RU')}</td>
-                      <td className="py-2 px-4 text-center">
-                        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase ${statusBadge}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${
-                            item.status === 'СРОЧНО ЗАКУПАТЬ' ? 'bg-red-500 animate-pulse' :
-                            item.status === 'ПЕРЕВЕЗТИ С ЛИП' ? 'bg-amber-500' :
-                            item.status === 'ЗАПАС В НОРМЕ' ? 'bg-emerald-500' : 'bg-orange-500'
-                          }`}></span>
-                          {item.status}
-                        </span>
+                    <tr key={item.id} className={rowClass}>
+                      <td className="text-center cell-mono">{item.id}</td>
+                      <td className="cell-bold">{item.name}</td>
+                      <td className="text-right cell-mono" style={{ color: '#cbd5e1' }}>
+                        {item.polotsk.toLocaleString('ru-RU')}
+                      </td>
+                      <td className="text-right cell-mono" style={{ color: '#cbd5e1' }}>
+                        {item.lipki.toLocaleString('ru-RU')}
+                      </td>
+                      <td className="text-right cell-mono" style={{ color: '#94a3b8' }}>
+                        {item.inTransit > 0 ? `+${item.inTransit.toLocaleString('ru-RU')}` : '0'}
+                      </td>
+                      <td className="text-right cell-mono" style={freeColorStyle}>
+                        {item.free.toLocaleString('ru-RU')}
+                      </td>
+                      <td className="text-center">
+                        {statusBadgeMarkup}
                       </td>
                     </tr>
                   );
@@ -449,27 +1007,24 @@ export default function App() {
         </div>
       </section>
 
-      {/* КНОПКИ УПРАВЛЕНИЯ */}
-      <footer className="bg-[#111a2e] border border-slate-850 rounded-xl p-4 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
-        <div className="flex items-center gap-2 text-slate-400 text-xs uppercase font-semibold tracking-wider">
-          <span>⚙️</span>
-          <h3>Системные кнопки управления</h3>
+      {/* СИСТЕМНЫЕ КНОПКИ УПРАВЛЕНИЯ */}
+      <footer className="system-footer">
+        <div className="footer-left">
+          <span>⚙️</span> Системные кнопки управления
         </div>
 
-        <div className="flex flex-wrap gap-3 w-full md:w-auto justify-end">
-          <button className="flex-1 md:flex-none bg-[#18233a] hover:bg-[#202f4e] border border-slate-700 text-slate-300 hover:text-white py-2.5 px-4 rounded-lg text-xs font-medium transition flex items-center justify-center gap-2">
-            <span>🔗</span>
-            Открыть базу синонимов (Мэппинг)
+        <div className="footer-buttons">
+          <button className="btn-footer">
+            <span>🔗</span> Открыть базу синонимов (Мэппинг)
           </button>
           
-          <div className="flex-1 md:flex-none bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-2 rounded-lg text-xs font-medium flex items-center justify-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <div className="badge-sheets">
+            <span className="dot dot-green" style={{ animation: 'pulse 1.5s infinite' }}></span>
             База Google Sheets: СВЯЗАНО
           </div>
 
-          <button className="flex-1 md:flex-none bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30 text-white py-2 px-4 rounded-lg text-xs font-semibold tracking-wide transition flex items-center justify-center gap-2 shadow-md shadow-indigo-900/20">
-            <span>📥</span>
-            Скачать отчёт С3 в Excel
+          <button className="btn-excel">
+            <span>📥</span> Скачать отчёт С3 в Excel
           </button>
         </div>
       </footer>
