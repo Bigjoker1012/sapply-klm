@@ -1,68 +1,92 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import { Pool } from 'pg';
 import path from 'path';
+import { Pool } from 'pg';
+import dotenv from 'dotenv';
 
+// Загружаем переменные окружения из .env файла
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3001;
+// Railway сам выдает порт через process.env.PORT, если его нет — берем 8080
+const PORT = process.env.PORT || 8080;
 
+// Настройка подключения к базе данных PostgreSQL
+// Railway автоматически предоставляет переменную DATABASE_URL
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
+
+// Проверка подключения к базе данных
+pool.connect((err, client, release) => {
+  if (err) {
+    return console.error('❌ Ошибка подключения к PostgreSQL:', err.stack);
+  }
+  console.log('✅ Успешно подключено к PostgreSQL');
+  release();
+});
+
+// Основные мидлвары
 app.use(cors());
 app.use(express.json());
 
-// DB pool — экспортируем для роутов
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes('railway') || process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false,
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT || '5432'),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-});
+// ==========================================
+// ТВОИ API ЭНДПОИНТЫ (Бизнес-логика)
+// ==========================================
 
-pool.connect((err) => {
-  if (err) console.error('❌ DB error:', err.message);
-  else console.log('✅ Connected to PostgreSQL');
-});
-
-// Health check
+// Пример базового пинга для проверки работоспособности
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), env: process.env.NODE_ENV });
+  res.json({ status: 'ok', message: 'Сервер работает отлично!' });
 });
 
-// Routes
-import authRoutes from './routes/auth';
-import uploadRoutes from './routes/upload';
-import synonymRoutes from './routes/synonyms';
-import inventoryRoutes from './routes/inventory';
-import inTransitRoutes from './routes/inTransit';
-import recipeRoutes from './routes/recipes';
-import dashboardRoutes from './routes/dashboard';
-import rawMaterialsRoutes from './routes/rawMaterials';
+// TODO: Сюда ты можешь вставить/перенести свои эндпоинты, например:
+// app.get('/api/dashboard/decisions', ...)
+// app.post('/api/upload/polotsk', ...)
+// app.get('/api/raw-materials', ...)
 
-app.use('/api/auth', authRoutes);
-app.use('/api/upload', uploadRoutes);
-app.use('/api/synonyms', synonymRoutes);
-app.use('/api/inventory', inventoryRoutes);
-app.use('/api/in-transit', inTransitRoutes);
-app.use('/api/recipes', recipeRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/raw-materials', rawMaterialsRoutes);
 
-// Serve React build in production
-const clientBuild = path.join(__dirname, '../../../dist/client');
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(clientBuild));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(clientBuild, 'index.html'));
+// ==========================================
+// РАЗДАЧА СТАТИКИ И ФРОНТЕНДА (REACT)
+// ==========================================
+
+// Путь к собранному фронтенду в папке dist/client
+// Так как сервер запускается из dist/server/src/index.js, поднимаемся на 3 уровня вверх
+const frontendPath = path.join(__dirname, '../../../dist/client');
+
+// Раздаем статические файлы (JS, CSS, картинки)
+app.use(express.static(frontendPath));
+
+// КРИТИЧЕСКИ ВАЖНО: Роут-заглушка для React Router.
+// Любые запросы, которые не начинаются с /api, отправляем на index.html фронтенда.
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendPath, 'index.html'), (err) => {
+    if (err) {
+      res.status(500).send(`
+        <h3>Упс! Кажется, фронтенд еще не собрался или лежит не в той папке.</h3>
+        <p>Искал тут: <code>${frontendPath}</code></p>
+        <p>Убедись, что выполнилась команда сборки фронтенда.</p>
+      `);
+    }
   });
-}
-
-app.listen(port, () => {
-  console.log(`🚀 Server on port ${port} [${process.env.NODE_ENV || 'development'}]`);
 });
+
+// Запуск нашего сервера
+app.listen(PORT, () => {
+  console.log(`🚀 Сервер запущен на порту ${PORT} [production]`);
+});
+```
+eof
+
+### Что тебе теперь нужно сделать:
+
+1. **Замени содержимое файлов у себя:**
+   * Открой файл `client/vite.config.ts` в своем проекте, сотри всё, что там есть, и вставь код из первого блока выше.
+   * Открой файл `server/src/index.ts`, сотри всё и вставь код из второго блока выше. *(Если у тебя там уже была написана какая-то важная бизнес-логика, просто скопируй её и вставь в отмеченное место `// ТВОИ API ЭНДПОИНТЫ`)*.
+
+2. **Закоммить и отправь изменения:**
+   Сделай привычные команды в терминале:
+   ```bash
+   git add .
+   git commit -m "fix: настроил раздачу статики фронтенда"
+   git push
