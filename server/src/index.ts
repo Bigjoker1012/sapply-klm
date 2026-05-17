@@ -4,7 +4,7 @@ import path from 'path';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 
-// Импортируем роуты твоего приложения
+// Импортируем твои роуты
 import authRoutes from './routes/auth';
 import dashboardRoutes from './routes/dashboard';
 import inTransitRoutes from './routes/inTransit';
@@ -14,19 +14,19 @@ import recipesRoutes from './routes/recipes';
 import synonymsRoutes from './routes/synonyms';
 import uploadRoutes from './routes/upload';
 
-// Загружаем настройки из .env
+// Загружаем переменные окружения
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Подключение к базе данных PostgreSQL
+// Настройка подключения к базе данных PostgreSQL
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
 
-// Проверяем коннект к БД
+// Проверка подключения к базе данных
 pool.connect((err, client, release) => {
   if (err) {
     return console.error('Error connecting to PostgreSQL:', err.stack);
@@ -35,11 +35,11 @@ pool.connect((err, client, release) => {
   release();
 });
 
-// Основные системные мидлвары
+// Основные мидлвары
 app.use(cors());
 app.use(express.json());
 
-// Подключаем все твои роуты к API
+// ПОДКЛЮЧАЕМ ТВОИ API РОУТЫ
 app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/in-transit', inTransitRoutes);
@@ -49,24 +49,28 @@ app.use('/api/recipes', recipesRoutes);
 app.use('/api/synonyms', synonymsRoutes);
 app.use('/api/upload', uploadRoutes);
 
-// Тест сервера
+// Базовый эндпоинт для проверки здоровья сервера
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });
 
-// --- РАЗДАЧА СОБРАННОГО ФРОНТЕНДА ---
+// --- НАСТРОЙКА РАЗДАЧИ ФРОНТЕНДА (REACT) ---
 
-// Определяем путь к скомпилированному React-приложению
+// Определяем абсолютный путь к папке с собранным фронтендом (dist/client)
 const frontendPath = path.resolve(__dirname, '../../../dist/client');
 
-// Раздаем статические файлы (картинки, стили, скрипты)
-app.use(express.static(frontendPath));
+// Раздаем статические файлы (картинки, JS, CSS из папки assets), 
+// но выключаем автоматический поиск index.html в корне этой папки (index: false)
+// Это не даст серверу случайно скормить index.css вместо веб-страницы!
+app.use(express.static(frontendPath, { index: false }));
 
-// Любой другой запрос отправляет пользователя на index.html (для работы React Router)
+// Для абсолютно любого GET запроса (который не ушел в API выше)
+// принудительно возвращаем именно файл index.html!
 app.get('*', (req, res) => {
   res.sendFile(path.join(frontendPath, 'index.html'), (err) => {
     if (err) {
-      res.status(500).send('Frontend is not found at: ' + frontendPath);
+      console.error('Ошибка отправки index.html:', err);
+      res.status(500).send('Критическая ошибка: Фронтенд не найден по пути: ' + frontendPath);
     }
   });
 });
