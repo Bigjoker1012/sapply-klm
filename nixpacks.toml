@@ -9,3 +9,30 @@ cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
+[
+phases.setup
+]
+nixPkgs = ["nodejs_20"]
+
+[
+phases.install
+]
+cmds = ["npm install --include=dev"]
+
+[
+phases.build
+]
+cmds = [
+  "npx vite build --config client/vite.config.ts",
+  "npx tsc -p server/tsconfig.json"
+]
+
+[
+start
+]
+cmd = "npm start"
+
+[
+variables
+]
+NODE_ENV = "production"
