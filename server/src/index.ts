@@ -56,21 +56,18 @@ app.get('/api/health', (req, res) => {
 
 // --- НАСТРОЙКА РАЗДАЧИ ФРОНТЕНДА (REACT) ---
 
-// Определяем абсолютный путь к папке с собранным фронтендом (dist/client)
-const frontendPath = path.resolve(__dirname, '../../../dist/client');
+// Используем process.cwd() — это гарантирует правильный путь к корню проекта на Railway
+const frontendPath = path.join(process.cwd(), 'dist', 'client');
 
-// Раздаем статические файлы (картинки, JS, CSS из папки assets), 
-// но выключаем автоматический поиск index.html в корне этой папки (index: false)
-// Это не даст серверу случайно скормить index.css вместо веб-страницы!
-app.use(express.static(frontendPath, { index: false }));
+// Раздаем статические файлы (картинки, JS, CSS)
+app.use(express.static(frontendPath));
 
-// Для абсолютно любого GET запроса (который не ушел в API выше)
-// принудительно возвращаем именно файл index.html!
+// Для абсолютно любого запроса возвращаем именно index.html
 app.get('*', (req, res) => {
   res.sendFile(path.join(frontendPath, 'index.html'), (err) => {
     if (err) {
       console.error('Ошибка отправки index.html:', err);
-      res.status(500).send('Критическая ошибка: Фронтенд не найден по пути: ' + frontendPath);
+      res.status(505).send('Критическая ошибка: Фронтенд не найден по пути: ' + frontendPath);
     }
   });
 });
