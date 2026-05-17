@@ -4,14 +4,24 @@ import path from 'path';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 
+// Импортируем твои роуты (они теперь смогут импортировать pool, так как мы его экспортируем)
+import authRoutes from './routes/auth';
+import dashboardRoutes from './routes/dashboard';
+import inTransitRoutes from './routes/inTransit';
+import inventoryRoutes from './routes/inventory';
+import rawMaterialsRoutes from './routes/rawMaterials';
+import recipesRoutes from './routes/recipes';
+import synonymsRoutes from './routes/synonyms';
+import uploadRoutes from './routes/upload';
+
 // Загружаем переменные окружения
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Настройка подключения к базе данных PostgreSQL
-const pool = new Pool({
+// Настройка подключения к базе данных PostgreSQL - ДОБАВЛЯЕМ export!
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
@@ -28,6 +38,16 @@ pool.connect((err, client, release) => {
 // Основные мидлвары
 app.use(cors());
 app.use(express.json());
+
+// ПОДКЛЮЧАЕМ ТВОИ API РОУТЫ
+app.use('/api/auth', authRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/in-transit', inTransitRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/raw-materials', rawMaterialsRoutes);
+app.use('/api/recipes', recipesRoutes);
+app.use('/api/synonyms', synonymsRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Базовый эндпоинт для проверки здоровья сервера
 app.get('/api/health', (req, res) => {
