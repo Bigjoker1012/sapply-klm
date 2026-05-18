@@ -1,8 +1,8 @@
 diff --git a/README.md b/README.md
-index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..6d27bff765abe2f96023be79551e189eb60a635a 100644
+index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..c9d8a5c6b6a13719b5f6c7dc9257b0a49e19245f 100644
 --- a/README.md
 +++ b/README.md
-@@ -9,56 +9,168 @@ ERP-система для управления сырьём: остатки, р
+@@ -9,56 +9,170 @@ ERP-система для управления сырьём: остатки, р
  
  ## Быстрый запуск
  
@@ -89,12 +89,12 @@ index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..6d27bff765abe2f96023be79551e189e
 +```bash
 +curl https://<your-app>.up.railway.app/api/health
 +```
++
++Ожидаемый признак подключения: `"db":{"status":"connected"}`.
  
 -# Frontend
 -cd frontend && npm run build
 -# build/ подключается к backend через express.static
-+Ожидаемый признак подключения: `"db":{"status":"connected"}`.
-+
 +Актуальный ответ `/api/health` должен содержать поле `service`: `root-server` для деплоя из корня репозитория или `backend-service`, если Railway запускает отдельную папку `backend`. Если ответ состоит только из `{"status":"ok","message":"Server is running"}` без `db`, Railway показывает старый deploy или другой service/root directory — сделай redeploy последнего commit и проверь настройки **Root Directory** / **Start Command**.
 +
 +Если в Railway build/deploy log видно `Healthcheck succeeded!`, контейнер уже живой.
@@ -104,7 +104,9 @@ index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..6d27bff765abe2f96023be79551e189e
 +
 +Если API живой, но React UI не открывается, проверь build log: должна выполняться full-stack сборка `npm run build` из корня. Если клиентский build отсутствует, корневой URL вернёт JSON `API is running, but React client build was not found`, а `/api/health` продолжит работать.
 +
-+Если в build plan всё ещё отображается `npm install --include=dev` вместо `npm ci --include=dev`, проверь, что Railway деплоит последний commit с `nixpacks.toml`, и что в Railway UI не задан кастомный Install Command, который переопределяет файл.
++Если build log показывает `Retry window: 30s`, значит деплой не использует текущий `railway.json`: в репозитории задано `healthcheckTimeout: 60`. Проверь, что Railway деплоит последний commit и что **Config File Path** указывает на `/railway.json`.
++
++Если build plan всё ещё отображает `npm install --include=dev` вместо `npm ci --include=dev`, это не блокирует деплой, но означает, что Railway не применил `nixpacks.toml` или Install Command переопределён в UI. Текущий `railway.json` дополнительно фиксирует full-stack Build Command: `npm run build:client && npm run build:server`.
 +
 +4. Один раз создай таблицы в Railway PostgreSQL:
 +
