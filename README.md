@@ -1,8 +1,8 @@
 diff --git a/README.md b/README.md
-index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..7d671fcfe17df496e106b4f2b2ceb3767311b0da 100644
+index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..6d27bff765abe2f96023be79551e189eb60a635a 100644
 --- a/README.md
 +++ b/README.md
-@@ -9,56 +9,164 @@ ERP-система для управления сырьём: остатки, р
+@@ -9,56 +9,168 @@ ERP-система для управления сырьём: остатки, р
  
  ## Быстрый запуск
  
@@ -89,13 +89,20 @@ index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..7d671fcfe17df496e106b4f2b2ceb376
 +```bash
 +curl https://<your-app>.up.railway.app/api/health
 +```
-+
+ 
+-# Frontend
+-cd frontend && npm run build
+-# build/ подключается к backend через express.static
 +Ожидаемый признак подключения: `"db":{"status":"connected"}`.
 +
 +Актуальный ответ `/api/health` должен содержать поле `service`: `root-server` для деплоя из корня репозитория или `backend-service`, если Railway запускает отдельную папку `backend`. Если ответ состоит только из `{"status":"ok","message":"Server is running"}` без `db`, Railway показывает старый deploy или другой service/root directory — сделай redeploy последнего commit и проверь настройки **Root Directory** / **Start Command**.
 +
 +Если в Railway build/deploy log видно `Healthcheck succeeded!`, контейнер уже живой.
 +Предупреждения Docker/Nixpacks вида `SecretsUsedInArgOrEnv` и `UndefinedVar: $NIXPACKS_PATH` не являются причиной падения деплоя, если healthcheck успешен. После этого нужно переходить к настройке runtime-переменных БД и Google Sheets в **App Service → Variables**.
++
++Если после `Connected to PostgreSQL` появляется `Stopping Container`, смотри следующую строку в логах: приложение теперь пишет, пришёл ли `SIGTERM`/`SIGINT` от Railway или случилось `uncaughtException`/`unhandledRejection`. `SIGTERM` сразу после успешного запуска часто означает, что Railway остановил старую реплику после нового deploy/redeploy; crash будет помечен как `💥`.
++
++Если API живой, но React UI не открывается, проверь build log: должна выполняться full-stack сборка `npm run build` из корня. Если клиентский build отсутствует, корневой URL вернёт JSON `API is running, but React client build was not found`, а `/api/health` продолжит работать.
 +
 +Если в build plan всё ещё отображается `npm install --include=dev` вместо `npm ci --include=dev`, проверь, что Railway деплоит последний commit с `nixpacks.toml`, и что в Railway UI не задан кастомный Install Command, который переопределяет файл.
 +
@@ -115,10 +122,7 @@ index 2a575df1506eb34e58b3e87e53e20a5b7a47462a..7d671fcfe17df496e106b4f2b2ceb376
 +1. Создай Google Cloud service account и включи Google Sheets API.
 +2. Поделись нужной таблицей с email service account.
 +3. В Railway → service приложения → **Variables** добавь:
- 
--# Frontend
--cd frontend && npm run build
--# build/ подключается к backend через express.static
++
 +```
 +GOOGLE_SHEETS_SPREADSHEET_ID=<id таблицы из URL>
 +GOOGLE_SHEETS_CLIENT_EMAIL=<service-account@project.iam.gserviceaccount.com>
