@@ -1,9 +1,24 @@
-import { ReplitConnectors } from "@replit/connectors-sdk";
+import axios from "axios";
+import { JWT } from "google-auth-library";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || "1XLQ1FSJOXLwIgEhbAtz95yrVXbEzBYQkAgQ5XEnLxOA";
+const GOOGLE_SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+const SHEETS_BASE = "https://sheets.googleapis.com";
 
-function getConn() {
-  return new ReplitConnectors();
+let _jwtClient: JWT | null = null;
+
+async function getAuthHeader(): Promise<string> {
+  if (!GOOGLE_SA_JSON) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not configured");
+  if (!_jwtClient) {
+    const creds = JSON.parse(GOOGLE_SA_JSON);
+    _jwtClient = new JWT({
+      email: creds.client_email,
+      key: creds.private_key,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+  }
+  const { token } = await _jwtClient.getAccessToken();
+  return `Bearer ${token}`;
 }
 
 /** Parse numbers that may use comma as decimal separator (European locale from Google Sheets) */
@@ -31,14 +46,28 @@ export function invalidateCache(): void {
 }
 
 async function sheetGet(path: string) {
-  const c = getConn();
-  const r = await c.proxy("google-sheet", path, { method: "GET" });
+  if (GOOGLE_SA_JSON) {
+    const auth = await getAuthHeader();
+    const { data } = await axios.get(`${SHEETS_BASE}${path}`, { headers: { Authorization: auth } });
+    return data;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ReplitConnectors } = require("@replit/connectors-sdk");
+  const r = await new ReplitConnectors().proxy("google-sheet", path, { method: "GET" });
   return r.json();
 }
 
 async function sheetPost(path: string, body: object) {
-  const c = getConn();
-  const r = await c.proxy("google-sheet", path, {
+  if (GOOGLE_SA_JSON) {
+    const auth = await getAuthHeader();
+    const { data } = await axios.post(`${SHEETS_BASE}${path}`, body, {
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+    });
+    return data;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ReplitConnectors } = require("@replit/connectors-sdk");
+  const r = await new ReplitConnectors().proxy("google-sheet", path, {
     method: "POST",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
@@ -47,8 +76,16 @@ async function sheetPost(path: string, body: object) {
 }
 
 async function sheetPut(path: string, body: object) {
-  const c = getConn();
-  const r = await c.proxy("google-sheet", path, {
+  if (GOOGLE_SA_JSON) {
+    const auth = await getAuthHeader();
+    const { data } = await axios.put(`${SHEETS_BASE}${path}`, body, {
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+    });
+    return data;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ReplitConnectors } = require("@replit/connectors-sdk");
+  const r = await new ReplitConnectors().proxy("google-sheet", path, {
     method: "PUT",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },

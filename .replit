@@ -10,6 +10,10 @@ channel = "stable-25_05"
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
 [workflows]
 runButton = "Project"
 
@@ -33,3 +37,6 @@ outputType = "webview"
 task = "shell.exec"
 args = "npx concurrently \"npx ts-node --transpile-only -P server/tsconfig.json server/src/index.ts\" \"cd client && npx vite\""
 waitForPort = 5000
+
+[deployment]
+deploymentTarget = "cloudrun"
