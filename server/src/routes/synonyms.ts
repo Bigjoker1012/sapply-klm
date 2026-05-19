@@ -3,6 +3,7 @@ import {
   readRange, appendRows, getAllRawMaterials,
   getUnresolvedQueue, resolveQueueItem, addAlias,
 } from "../services/sheetsService";
+import { suggestMatches } from "../services/aiMatcher";
 
 const router = Router();
 
@@ -70,6 +71,22 @@ router.post("/confirm", async (req: Request, res: Response) => {
     if (synonym) await addAlias(uid, synonym, "manual");
     if (queueId) await resolveQueueItem(queueId);
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── ИИ-сопоставление ─────────────────────────────────────────────────────
+
+router.post("/ai-suggest", async (req: Request, res: Response) => {
+  const { items } = req.body; // string[]
+  if (!Array.isArray(items) || !items.length) {
+    return res.status(400).json({ error: "items[] обязателен" });
+  }
+  try {
+    const materials = await getAllRawMaterials();
+    const suggestions = await suggestMatches(items, materials);
+    res.json(suggestions);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

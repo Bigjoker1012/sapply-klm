@@ -690,33 +690,81 @@ export default function Dashboard() {
   );
 }
 
+interface AiHint {
+  suggested_raw_uid: string | null;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+}
+
 function UnmatchedRow({ item, rawMaterials, onConfirm }: {
   item: UnmatchedItem;
   rawMaterials: RawMaterial[];
   onConfirm: (item: UnmatchedItem, raw_uid: string) => void;
 }) {
   const [selectedUid, setSelectedUid] = useState('');
+  const [aiHint, setAiHint] = useState<AiHint | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const handleAiSuggest = async () => {
+    setAiLoading(true);
+    try {
+      const { data } = await axios.post('/api/synonyms/ai-suggest', { items: [item.original_text] });
+      const suggestion = Array.isArray(data) ? data[0] : null;
+      if (suggestion) {
+        setAiHint(suggestion);
+        if (suggestion.suggested_raw_uid) {
+          setSelectedUid(suggestion.suggested_raw_uid);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const confidenceColor = aiHint?.confidence === 'high'
+    ? 'text-green-400' : aiHint?.confidence === 'medium'
+    ? 'text-yellow-400' : 'text-red-400';
+
   return (
-    <div className="flex items-center gap-2 bg-gray-800 rounded px-3 py-2 text-xs">
-      <span className="font-mono text-yellow-300 flex-1 truncate">{item.original_text}</span>
-      <span className="text-gray-500 shrink-0">[{item.source_type}]</span>
-      <select
-        value={selectedUid}
-        onChange={e => setSelectedUid(e.target.value)}
-        className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs"
-      >
-        <option value="">Выберите сырьё...</option>
-        {rawMaterials.map(rm => (
-          <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>
-        ))}
-      </select>
-      <button
-        disabled={!selectedUid}
-        onClick={() => onConfirm(item, selectedUid)}
-        className="bg-green-700 hover:bg-green-600 text-white px-2 py-1 rounded disabled:opacity-40 transition shrink-0"
-      >
-        ✓
-      </button>
+    <div className="bg-gray-800 rounded px-3 py-2 text-xs space-y-1">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-yellow-300 flex-1 truncate" title={item.original_text}>{item.original_text}</span>
+        <span className="text-gray-500 shrink-0">[{item.source_type}]</span>
+        <button
+          onClick={handleAiSuggest}
+          disabled={aiLoading}
+          title="Спросить ИИ"
+          className="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded disabled:opacity-40 transition shrink-0 text-xs"
+        >
+          {aiLoading ? '...' : '✨ ИИ'}
+        </button>
+        <select
+          value={selectedUid}
+          onChange={e => setSelectedUid(e.target.value)}
+          className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs"
+        >
+          <option value="">Выберите сырьё...</option>
+          {rawMaterials.map(rm => (
+            <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>
+          ))}
+        </select>
+        <button
+          disabled={!selectedUid}
+          onClick={() => onConfirm(item, selectedUid)}
+          className="bg-green-700 hover:bg-green-600 text-white px-2 py-1 rounded disabled:opacity-40 transition shrink-0"
+        >
+          ✓
+        </button>
+      </div>
+      {aiHint && (
+        <div className={`text-xs pl-1 ${confidenceColor}`}>
+          ✨ {aiHint.suggested_raw_uid
+            ? `${rawMaterials.find(m => m.raw_uid === aiHint.suggested_raw_uid)?.full_name ?? aiHint.suggested_raw_uid} — ${aiHint.reason}`
+            : `Нет совпадения — ${aiHint.reason}`}
+        </div>
+      )}
     </div>
   );
 }
