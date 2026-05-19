@@ -1,21 +1,39 @@
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { writeFile, unlink } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import pdfParse from 'pdf-parse';
+
+const execFileAsync = promisify(execFile);
 
 export interface ParsedRow {
   rawName: string;
   quantity: number;
 }
 
-/**
- * Парсинг PDF остатков Полоцка.
- * Ищет строки вида: "Витамин А 1000   111.6 кг"
- */
+export interface RecipeRow {
+  rawName: string;
+  percentage: number;
+  quantityPerTon: number;
+}
+
+export interface ParsedRecipe {
+  name: string;
+  code: string;
+  date: string;
+  batchKg: number;
+  rows: RecipeRow[];
+}
+
+// ─── Warehouse PDF (fallback — scanned PDFs use excelParser instead) ──────────
+
 export async function parsePolotskPdf(buffer: Buffer): Promise<ParsedRow[]> {
   const data = await pdfParse(buffer);
-  const lines = data.text.split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = data.text.split('\n').map((l: string) => l.trim()).filter(Boolean);
   const rows: ParsedRow[] = [];
 
   for (const line of lines) {
-    // Паттерн: название + число (с точкой или запятой)
     const match = line.match(/^(.+?)\s+([\d\s.,]+)\s*(кг|kg)?$/i);
     if (!match) continue;
     const name = match[1].trim();
@@ -29,56 +47,45 @@ export async function parsePolotskPdf(buffer: Buffer): Promise<ParsedRow[]> {
   return rows;
 }
 
-/**
- * Парсинг PDF рецепта.
- * Ищет строки с % вводом и наименованием компонента.
- */
-export interface RecipeRow {
-  rawName: string;
-  percentage: number;
-  quantityPerTon: number;
-}
+// ─── Recipe PDF via OCR (tesseract 5.5) ───────────────────────────────────────
 
-export async function parseRecipePdf(buffer: Buffer): Promise<{ name: string; code: string; date: string; rows: RecipeRow[] }> {
-  const data = await pdfParse(buffer);
-  const text = data.text;
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+const OCR_SCRIPT = join(__dirname, 'ocr_recipe.py');
 
-  let recipeName = '';
-  let recipeCode = '';
-  let recipeDate = '';
-  const rows: RecipeRow[] = [];
+export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
+  const tmpFile = join(tmpdir(), `klm_recipe_${Date.now()}.pdf`);
+  try {
+    await writeFile(tmpFile, buffer);
 
-  for (const line of lines) {
-    // Дата
-    if (!recipeDate) {
-      const dateMatch = line.match(/(\d{2}[.\-\/]\d{2}[.\-\/]\d{2,4})/);
-      if (dateMatch) recipeDate = dateMatch[1];
+    const { stdout, stderr } = await execFileAsync(
+      'python3',
+      [OCR_SCRIPT, tmpFile],
+      { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }
+    );
+
+    if (!stdout.trim()) {
+      throw new Error(`OCR script returned empty output. stderr: ${stderr?.slice(0, 300)}`);
     }
-    // Код рецепта (ПЛЦ, PLT, REC и т.п.)
-    if (!recipeCode) {
-      const codeMatch = line.match(/\b(ПЛЦ|PLT|REC|RM)[- ]?[\d]+/i);
-      if (codeMatch) recipeCode = codeMatch[0];
+
+    const parsed = JSON.parse(stdout);
+
+    if (parsed.error) {
+      throw new Error(`OCR error: ${parsed.error}`);
     }
-    // Строка компонента: название % количество
-    const compMatch = line.match(/^(.+?)\s+([\d.,]+)\s*%?\s+([\d.,]+)/);
-    if (compMatch) {
-      const name = compMatch[1].trim();
-      const pct = parseFloat(compMatch[2].replace(',', '.'));
-      const qty = parseFloat(compMatch[3].replace(',', '.'));
-      if (!isNaN(pct) && !isNaN(qty) && name.length > 1) {
-        rows.push({ rawName: name, percentage: pct, quantityPerTon: qty });
-      }
-    }
+
+    const rows: RecipeRow[] = (parsed.rows || []).map((r: any) => ({
+      rawName: r.rawName,
+      percentage: Number(r.percentage) || 0,
+      quantityPerTon: Number(r.quantityKg) || 0,
+    }));
+
+    return {
+      name: parsed.name || parsed.code || 'Рецепт',
+      code: parsed.code || '',
+      date: parsed.date || new Date().toISOString().split('T')[0],
+      batchKg: Number(parsed.batchKg) || 1000,
+      rows,
+    };
+  } finally {
+    unlink(tmpFile).catch(() => {});
   }
-
-  // Название рецепта — первая длинная строка
-  recipeName = lines.find(l => l.length > 5 && !/^\d/.test(l)) || 'Рецепт';
-
-  return {
-    name: recipeName,
-    code: recipeCode,
-    date: recipeDate || new Date().toISOString().split('T')[0],
-    rows
-  };
 }

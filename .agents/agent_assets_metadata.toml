@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "RxcB5-8MypMgTRavWYvLH"
+uri = "file://attached_assets/recipe_preview.png"
+type = "image"
+title = "Рецепт технолога (Антистресс) — исходный вид"
