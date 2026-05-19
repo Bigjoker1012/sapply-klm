@@ -88,6 +88,19 @@ export async function appendRows(sheet: string, values: any[][]): Promise<void> 
   );
 }
 
+// ─── SHEET CREATION ─────────────────────────────────────────────────────────
+
+async function ensureSheets(titles: string[]): Promise<void> {
+  try {
+    const meta = await sheetGet(`/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties.title`);
+    const existing = new Set<string>((meta.sheets || []).map((s: any) => String(s.properties?.title || "")));
+    const toCreate = titles.filter(t => !existing.has(t));
+    if (!toCreate.length) return;
+    const requests = toCreate.map(title => ({ addSheet: { properties: { title } } }));
+    await sheetPost(`/v4/spreadsheets/${SHEET_ID}:batchUpdate`, { requests });
+  } catch { /* sheet may already exist or API not available */ }
+}
+
 // ─── RAW MATERIALS (Syryo) ─────────────────────────────────────────────────
 
 export interface RawMaterial {
@@ -158,10 +171,31 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
   // Build lookup structures
   const byFullName  = new Map(materials.map(m => [m.full_name.toLowerCase().trim(), m.raw_uid]));
   const byShortName = new Map(materials.map(m => [m.short_name.toLowerCase().trim(), m.raw_uid]));
-  const byAlias     = new Map<string, string>();
+  const validUids   = new Set(materials.map(m => m.raw_uid));
+
+  const byAlias = new Map<string, string>();
   for (const row of aliasRows) {
-    if (row[2]) byAlias.set(String(row[2]).toLowerCase().trim(), String(row[1]));
+    if (!row[0]) continue;
+    const col0 = String(row[0]);
+    // Detect format:
+    // NEW (code-generated): A=AL_xxx id, B=raw_uid, C=alias_text, D=source
+    // OLD (manual):         A=RAW_uid,  B=alias_text, C=description, D=source
+    if (col0.startsWith("AL_") && row[1] && row[2]) {
+      // new format
+      byAlias.set(String(row[2]).toLowerCase().trim(), String(row[1]));
+    } else if (validUids.has(col0) && row[1]) {
+      // old format: col A is a valid raw_uid
+      byAlias.set(String(row[1]).toLowerCase().trim(), col0);
+    } else if (!col0.startsWith("AL_") && row[1] && row[2]) {
+      // old format variant: A might be RAW001 (no underscore) — try mapping anyway
+      if (row[1]) byAlias.set(String(row[1]).toLowerCase().trim(), col0);
+    }
   }
+
+  // Pre-build sorted alias entries for substring matching (longest first avoids false short matches)
+  const aliasEntries = Array.from(byAlias.entries())
+    .filter(([k]) => k.length >= 5)
+    .sort((a, b) => b[0].length - a[0].length);
 
   const result = new Map<string, string | null>();
   for (const name of names) {
@@ -169,12 +203,20 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
     if (byFullName.has(n))  { result.set(name, byFullName.get(n)!);  continue; }
     if (byShortName.has(n)) { result.set(name, byShortName.get(n)!); continue; }
     if (byAlias.has(n))     { result.set(name, byAlias.get(n)!);     continue; }
-    // Fuzzy fallback
-    const fuzzy = materials.find(m =>
-      m.full_name.toLowerCase().includes(n.slice(0, 8)) ||
-      n.includes(m.full_name.toLowerCase().slice(0, 8))
-    );
-    result.set(name, fuzzy ? fuzzy.raw_uid : null);
+
+    // Fuzzy 1: vendor name CONTAINS a known alias (КД-style: "Актиген мешок 25 кг." contains alias "Актиген")
+    const aliasHit = aliasEntries.find(([alias]) => n.includes(alias));
+    if (aliasHit) { result.set(name, aliasHit[1]); continue; }
+
+    // Fuzzy 2: vendor name CONTAINS a material full_name or vice-versa (min 6 chars to avoid false positives)
+    const matHit = materials.find(m => {
+      const fn = m.full_name.toLowerCase();
+      const sn = m.short_name.toLowerCase();
+      return (fn.length >= 6 && n.includes(fn)) ||
+             (fn.length >= 6 && fn.includes(n)) ||
+             (sn.length >= 6 && n.includes(sn));
+    });
+    result.set(name, matHit ? matHit.raw_uid : null);
   }
   return result;
 }
@@ -301,6 +343,98 @@ export async function writeLipStockBatch(
   const allRows = [...keepRows, ...newRows];
   await clearRange("LipStock", "A2:I5000");
   if (allRows.length) await writeRange("LipStock", `A2:I${allRows.length + 1}`, allRows);
+  invalidateCache();
+}
+
+// ─── LIP BATCHES (КД — ведомость по партиям) ────────────────────────────────
+
+/**
+ * Writes КД batch rows to LipBatches sheet — one row per batch.
+ * Replaces all today's rows for the given raw_uid set in one operation.
+ */
+export async function writeLipBatchesBulk(
+  rows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string }[]
+): Promise<void> {
+  if (!rows.length) return;
+  await ensureSheets(["LipBatches"]);
+  const today = new Date().toISOString().split("T")[0];
+  let existing: any[][] = [];
+  try { existing = await readRange("LipBatches", "A2:G5000"); } catch {}
+  const keepRows = existing.filter(r => r[0] !== today);
+  const newRows = rows.map(r => [today, r.raw_uid, r.batch_code, r.vendor_name, r.qty, "кг", r.source]);
+  const allRows = [...keepRows, ...newRows];
+  await clearRange("LipBatches", "A2:G5000");
+  if (allRows.length) await writeRange("LipBatches", `A2:G${allRows.length + 1}`, allRows);
+  invalidateCache();
+}
+
+export async function getLipBatchesList(): Promise<any[]> {
+  try {
+    await ensureSheets(["LipBatches"]);
+    const rows = await readRange("LipBatches", "A2:G5000");
+    return rows.filter(r => r[0]).map(r => ({
+      snapshot_date: r[0], raw_uid: r[1], batch_code: r[2],
+      vendor_name: r[3], qty: parseNum(r[4]), unit: r[5], source: r[6],
+    }));
+  } catch { return []; }
+}
+
+/** Returns sum of latest КД snapshot per raw_uid (for use in computeDecisions). */
+export async function getLatestLipBatchStock(): Promise<Map<string, number>> {
+  try {
+    const rows = await readRange("LipBatches", "A2:G5000");
+    // Accumulate totals per (uid, date); keep only latest date per uid
+    const byUid = new Map<string, { date: string; total: number }>();
+    for (const r of rows) {
+      if (!r[1]) continue;
+      const uid = String(r[1]);
+      const date = String(r[0] || "");
+      const qty = parseNum(r[4]);
+      const cur = byUid.get(uid);
+      if (!cur) {
+        byUid.set(uid, { date, total: qty });
+      } else if (date > cur.date) {
+        byUid.set(uid, { date, total: qty }); // newer snapshot → reset
+      } else if (date === cur.date) {
+        byUid.set(uid, { date, total: cur.total + qty }); // same day → accumulate batches
+      }
+    }
+    return new Map(Array.from(byUid.entries()).map(([uid, v]) => [uid, v.total]));
+  } catch { return new Map(); }
+}
+
+// ─── ANALOGS ────────────────────────────────────────────────────────────────
+
+export async function getAnalogs(): Promise<any[]> {
+  try {
+    await ensureSheets(["Analogs"]);
+    const [rows, materials] = await Promise.all([
+      readRange("Analogs", "A2:D5000"),
+      getAllRawMaterials(),
+    ]);
+    const nameMap = new Map(materials.map(m => [m.raw_uid, m.full_name]));
+    return rows.filter(r => r[0] && r[1] && r[2]).map(r => ({
+      id: r[0],
+      raw_uid: r[1],
+      analog_raw_uid: r[2],
+      note: r[3] || "",
+      name: nameMap.get(String(r[1])) || String(r[1]),
+      analog_name: nameMap.get(String(r[2])) || String(r[2]),
+    }));
+  } catch { return []; }
+}
+
+export async function addAnalog(raw_uid: string, analog_raw_uid: string, note: string): Promise<void> {
+  await ensureSheets(["Analogs"]);
+  const id = `AN_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+  await appendRows("Analogs", [[id, raw_uid, analog_raw_uid, note]]);
+}
+
+export async function deleteAnalog(id: string): Promise<void> {
+  const rows = await readRange("Analogs", "A2:D5000");
+  const filtered = rows.filter(r => r[0] !== id);
+  await clearRange("Analogs", "A2:D5000");
+  if (filtered.length) await writeRange("Analogs", `A2:D${filtered.length + 1}`, filtered);
   invalidateCache();
 }
 

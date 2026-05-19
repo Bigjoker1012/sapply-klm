@@ -2,12 +2,12 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import {
   matchBatch, addAliasesBatch, addToReviewQueueBatch,
-  writePlantStock, writeLipStockBatch,
+  writePlantStock, writeLipStockBatch, writeLipBatchesBulk,
   writeRecipe, writeRecipeLines, writeNeedFromRecipe,
   getUnresolvedQueue, resolveQueueItem, addAlias,
 } from "../services/sheetsService";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
-import { parsePolotskExcel, parseRecipeExcel } from "../services/excelParser";
+import { parsePolotskExcel, parseRecipeExcel, parseKdExcel } from "../services/excelParser";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
@@ -178,6 +178,70 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines);
 
     res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Загрузка КД "Ведомость по партиям" Липковской ───────────────────────────
+// Каждая строка КД = отдельная партия. Сохраняем в LipBatches (гранулярно)
+// и в LipStock (агрегат по raw_uid для расчётов дашборда).
+
+router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: Response) => {
+  if (!req.file) return res.status(400).json({ error: "Файл не найден" });
+  try {
+    const parsed = parseKdExcel(req.file.buffer);
+    if (!parsed.length) return res.status(400).json({ error: "Нет данных в файле (проверьте формат КД)" });
+
+    // 1. Match ALL base names at once (2 API calls)
+    const matchMap = await matchBatch(parsed.map(r => r.baseName));
+
+    const batchRows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string }[] = [];
+    const stockAggregate = new Map<string, { name: string; qty: number }>();
+    const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
+    let matched = 0;
+    let unmatched = 0;
+
+    for (const row of parsed) {
+      const rawUid = matchMap.get(row.baseName);
+      if (rawUid) {
+        batchRows.push({ raw_uid: rawUid, batch_code: row.batchCode, vendor_name: row.vendorName, qty: row.qty, source: "kd_file" });
+        // Aggregate for LipStock
+        const cur = stockAggregate.get(rawUid);
+        stockAggregate.set(rawUid, { name: row.baseName, qty: (cur?.qty ?? 0) + row.qty });
+        // Register baseName as alias if it came with a batch suffix
+        if (row.batchCode) {
+          newAliases.push({ raw_uid: rawUid, alias: row.baseName, source: "kd_file" });
+        }
+        matched++;
+      } else {
+        queueItems.push({ text: row.baseName, source_type: "lipkovskaya_kd", file_name: req.file!.originalname });
+        unmatched++;
+      }
+    }
+
+    // 2. Build LipStock aggregate rows
+    const lipStockRows = Array.from(stockAggregate.entries()).map(([raw_uid, v]) => ({
+      raw_uid, name_from_source: v.name, qty: v.qty, source: "kd_file",
+    }));
+
+    // 3. Write everything in parallel (LipBatches + LipStock aggregate + aliases + queue)
+    await Promise.all([
+      writeLipBatchesBulk(batchRows),
+      writeLipStockBatch(lipStockRows),
+      newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
+      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+    ]);
+
+    res.json({
+      ok: true,
+      total: parsed.length,
+      matched,
+      unmatched,
+      batches: batchRows.length,
+      message: `КД загружен: ${matched} позиций (${batchRows.length} партий), не распознано: ${unmatched}`,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

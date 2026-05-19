@@ -5,10 +5,60 @@ export interface ParsedRow {
   quantity: number;
 }
 
+export interface KdRow {
+  vendorName: string;  // full string as in КД ("Актиген мешок 25 кг. партия IE002856")
+  baseName: string;    // base without batch suffix ("Актиген мешок 25 кг.")
+  batchCode: string;   // "IE002856" or ""
+  qty: number;         // конечный остаток
+}
+
+const KD_BATCH_RE = /\s*,?\s*партия\s+(\S+)\s*$/i;
+
+const KD_SKIP_RE = /^(склад|номенклатура|итог|период|показат|группир|отбор|доп)/i;
+
 export interface RecipeRow {
   rawName: string;
   percentage: number;
   quantityPerTon: number;
+}
+
+/**
+ * Парсинг КД "Ведомость по партиям товаров на складах" (Липковская/1С).
+ * Формат: col B (index 1) = наименование + партия, col I (index 8) = конечный остаток.
+ * Возвращает строки с baseName (без суффикса партии), batchCode и qty.
+ */
+export function parseKdExcel(buffer: Buffer): KdRow[] {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+  const results: KdRow[] = [];
+
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row) continue;
+
+    const vendorName = String(row[1] || "").trim();
+    if (!vendorName || vendorName.length < 3) continue;
+    if (KD_SKIP_RE.test(vendorName)) continue;
+
+    // Column I (index 8) = конечный остаток кол-во
+    const qtyRaw = row[8];
+    if (qtyRaw == null || qtyRaw === "") continue;
+    const qty = parseFloat(String(qtyRaw).replace(/\s/g, "").replace(",", "."));
+    if (isNaN(qty) || qty <= 0) continue;
+
+    // Extract batch code from trailing "партия XXXXX"
+    const batchMatch = vendorName.match(KD_BATCH_RE);
+    const batchCode = batchMatch ? batchMatch[1] : "";
+    const baseName = batchMatch
+      ? vendorName.slice(0, vendorName.length - batchMatch[0].length).trim()
+      : vendorName;
+
+    results.push({ vendorName, baseName, batchCode, qty });
+  }
+
+  return results;
 }
 
 /**
