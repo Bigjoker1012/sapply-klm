@@ -557,11 +557,13 @@ export async function writeRecipeLines(recipe_uid: string, lines: {
 
 export async function getRecipesList(): Promise<any[]> {
   const rows = await readRange("Recipes", "A2:M5000");
-  return rows.filter(r => r[0]).map(r => ({
-    recipe_uid: r[0], code: r[1], full_name: r[2], premix_name: r[3],
-    date: r[4], batch_t: parseNum(r[6]), customer: r[7], status: r[11],
-    base_batch_kg: parseNum(r[12]) || 1000,
-  }));
+  return rows
+    .filter(r => r[0] && String(r[0]).startsWith("REC"))
+    .map(r => ({
+      recipe_uid: r[0], code: r[1], full_name: r[2], premix_name: r[3],
+      date: r[4], batch_t: parseNum(r[6]), customer: r[7], status: r[11],
+      base_batch_kg: parseNum(r[12]) || 1000,
+    }));
 }
 
 // ─── APP LOG ────────────────────────────────────────────────────────────────

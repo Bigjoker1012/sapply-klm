@@ -62,58 +62,90 @@ export function parseKdExcel(buffer: Buffer): KdRow[] {
 }
 
 /**
- * Парсинг "Складского отчёта № ЗПП-37" от кладовщика Полоцка.
- * Формат: col A = наименование + номер партии (К111-26), col E = остаток на конец дня.
- * Несколько партий одного сырья суммируются.
+ * Парсинг складских остатков — поддерживает два формата:
+ *
+ * Формат А — ЗПП-37 (Липковская/кладовщик):
+ *   col A = наименование + номер партии (К111-26), col E = остаток на конец дня.
+ *
+ * Формат Б — "Расход сырья" (Полоцк, плановая таблица):
+ *   col B (idx 1) = наименование, col I (idx 8) = остаток на отчётную дату.
+ *
+ * Автоопределение формата: если в первых 10 строках col B содержит текст
+ * длиннее 3 символов и col I — число, используем Формат Б.
+ * Несколько партий одного сырья суммируются (актуально для ЗПП-37).
  */
 export function parsePolotskExcel(buffer: Buffer): ParsedRow[] {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-  const SKIP_STARTS = [
-    "итого", "начальник", "бухгалтер", "мастер", "наименование",
-    "хлебопродуктов", "склад", "оао", "утвержд", "министер",
-    "и продо", "код по", "отраслев", "с к л", "о движ",
-    "клм давальч", "премиксы клм", "за ", "Материально",
-  ];
-
   const aggregated = new Map<string, number>();
-  let dateStr = "";
 
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row) continue;
+  // ── Формат Б: многолистовой "Расход сырья" Полоцка ───────────────────────
+  // Ищем лист с "_квартал" в имени, у которого в col I есть ненулевые данные.
+  // Col B = название сырья, Col I (idx 8) = остаток на отчётную дату.
+  const kvartalSheet = wb.SheetNames.find((n: string) => {
+    if (!/_квартал/i.test(n)) return false;
+    const s = wb.Sheets[n];
+    const rs: any[][] = XLSX.utils.sheet_to_json(s, { header: 1, defval: null });
+    return rs.some((r: any[]) => {
+      const b = String(r[1] || "").trim();
+      const iVal = r[8];
+      return b.length > 3 && !b.match(/^[0-9]/) &&
+             iVal != null && parseFloat(String(iVal)) > 0;
+    });
+  });
 
-    // Detect date: column B contains "за __ мая 2026 года"
-    const c1 = String(row[1] || "").trim().toLowerCase();
-    if (!dateStr && c1.startsWith("за ") && /20\d\d/.test(c1)) {
-      dateStr = String(row[1] || "").trim();
+  if (kvartalSheet) {
+    const kWs = wb.Sheets[kvartalSheet];
+    const kRows: any[][] = XLSX.utils.sheet_to_json(kWs, { header: 1, defval: null });
+    const SKIP_B = ["итого", "всего", "наименование", "сырье", "дата", "номер", "№",
+                    "число", "выраб", "постав", "планир", "перевезти", "отр.", "срочно"];
+    for (const row of kRows) {
+      if (!row) continue;
+      const nameRaw = String(row[1] || "").trim();
+      if (!nameRaw || nameRaw.length < 2) continue;
+      const nameLow = nameRaw.toLowerCase();
+      if (SKIP_B.some(s => nameLow.startsWith(s))) continue;
+      const iVal = row[8];
+      if (iVal == null || iVal === "" || iVal === 0) continue;
+      const qty = parseFloat(String(iVal).replace(/\s/g, "").replace(",", "."));
+      if (isNaN(qty) || qty <= 0) continue;
+      const name = nameRaw.replace(/\s{2,}/g, " ").trim();
+      aggregated.set(name, (aggregated.get(name) || 0) + qty);
     }
-
-    const c0Raw = String(row[0] || "").trim();
-    if (!c0Raw) continue;
-
-    // Skip header / signature / section-marker rows
-    const c0Low = c0Raw.toLowerCase();
-    if (SKIP_STARTS.some(s => c0Low.startsWith(s.toLowerCase()))) continue;
-    if (/^\s*\d+\s*$/.test(c0Raw)) continue; // pure number
-
-    // Column E (index 4) = остаток на конец дня
-    const c4 = row[4];
-    if (c4 == null || c4 === "" || c4 === 0) continue;
-    const qty = parseFloat(String(c4).replace(/\s/g, "").replace(",", "."));
-    if (isNaN(qty) || qty <= 0) continue;
-
-    // Clean material name: strip batch code like "К111-26", "К31", " 179-26"
-    let name = c0Raw
-      .replace(/\s+К?\d{1,5}[-\d]*\s*$/, "")   // trailing К###-## or К##
-      .replace(/\s{2,}/g, " ")
-      .trim();
-    if (name.length < 2) continue;
-
-    // Aggregate by cleaned name
-    aggregated.set(name, (aggregated.get(name) || 0) + qty);
+  } else {
+    // ── Формат А: ЗПП-37 (col A = name, col E = остаток) ────────────────
+    const SKIP_STARTS = [
+      "итого", "начальник", "бухгалтер", "мастер", "наименование",
+      "хлебопродуктов", "склад", "оао", "утвержд", "министер",
+      "и продо", "код по", "отраслев", "с к л", "о движ",
+      "клм давальч", "премиксы клм", "за ", "Материально",
+    ];
+    let dateStr = "";
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      const c1 = String(row[1] || "").trim().toLowerCase();
+      if (!dateStr && c1.startsWith("за ") && /20\d\d/.test(c1)) {
+        dateStr = String(row[1] || "").trim();
+      }
+      const c0Raw = String(row[0] || "").trim();
+      if (!c0Raw) continue;
+      const c0Low = c0Raw.toLowerCase();
+      if (SKIP_STARTS.some(s => c0Low.startsWith(s.toLowerCase()))) continue;
+      if (/^\s*\d+\s*$/.test(c0Raw)) continue;
+      const c4 = row[4];
+      if (c4 == null || c4 === "" || c4 === 0) continue;
+      const qty = parseFloat(String(c4).replace(/\s/g, "").replace(",", "."));
+      if (isNaN(qty) || qty <= 0) continue;
+      let name = c0Raw
+        .replace(/\s+К?\d{1,5}[-\d]*\s*$/, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      if (name.length < 2) continue;
+      aggregated.set(name, (aggregated.get(name) || 0) + qty);
+    }
   }
 
   return Array.from(aggregated.entries()).map(([rawName, quantity]) => ({ rawName, quantity }));
