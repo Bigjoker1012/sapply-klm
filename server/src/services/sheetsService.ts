@@ -144,6 +144,41 @@ export async function findRawByAlias(alias: string): Promise<string | null> {
   return fuzzy ? fuzzy.raw_uid : null;
 }
 
+/**
+ * Batch matcher: loads materials + aliases ONCE, then resolves all names in-memory.
+ * Returns a Map<originalName, raw_uid | null>.
+ * Use this in upload handlers instead of calling findRawByAlias() in a loop.
+ */
+export async function matchBatch(names: string[]): Promise<Map<string, string | null>> {
+  const [materials, aliasRows] = await Promise.all([
+    getAllRawMaterials(),
+    readRange("Aliases", "A2:D5000"),
+  ]);
+
+  // Build lookup structures
+  const byFullName  = new Map(materials.map(m => [m.full_name.toLowerCase().trim(), m.raw_uid]));
+  const byShortName = new Map(materials.map(m => [m.short_name.toLowerCase().trim(), m.raw_uid]));
+  const byAlias     = new Map<string, string>();
+  for (const row of aliasRows) {
+    if (row[2]) byAlias.set(String(row[2]).toLowerCase().trim(), String(row[1]));
+  }
+
+  const result = new Map<string, string | null>();
+  for (const name of names) {
+    const n = name.toLowerCase().trim();
+    if (byFullName.has(n))  { result.set(name, byFullName.get(n)!);  continue; }
+    if (byShortName.has(n)) { result.set(name, byShortName.get(n)!); continue; }
+    if (byAlias.has(n))     { result.set(name, byAlias.get(n)!);     continue; }
+    // Fuzzy fallback
+    const fuzzy = materials.find(m =>
+      m.full_name.toLowerCase().includes(n.slice(0, 8)) ||
+      n.includes(m.full_name.toLowerCase().slice(0, 8))
+    );
+    result.set(name, fuzzy ? fuzzy.raw_uid : null);
+  }
+  return result;
+}
+
 export async function addAlias(raw_uid: string, alias: string, source: string): Promise<void> {
   const existing = await readRange("Aliases", "A2:D5000");
   const exists = existing.some(
@@ -154,9 +189,39 @@ export async function addAlias(raw_uid: string, alias: string, source: string): 
   await appendRows("Aliases", [[id, raw_uid, alias, source]]);
 }
 
+/**
+ * Add multiple aliases in a single append call.
+ * Skips entries already present in existingAliasRows.
+ */
+export async function addAliasesBatch(
+  entries: { raw_uid: string; alias: string; source: string }[],
+  existingAliasRows?: any[][]
+): Promise<void> {
+  const existing = existingAliasRows ?? await readRange("Aliases", "A2:D5000");
+  const existingSet = new Set(existing.map(r => `${r[1]}|${String(r[2]).toLowerCase()}`));
+  const newRows = entries
+    .filter(e => !existingSet.has(`${e.raw_uid}|${e.alias.toLowerCase()}`))
+    .map(e => [`AL_${Date.now()}_${Math.random().toString(36).slice(2,5)}`, e.raw_uid, e.alias, e.source]);
+  if (newRows.length) await appendRows("Aliases", newRows);
+}
+
 export async function addToReviewQueue(text: string, source_type: string, file_name: string): Promise<void> {
   const id = `RQ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   await appendRows("ReviewQueue", [[id, text, source_type, file_name, "FALSE", new Date().toISOString()]]);
+}
+
+/**
+ * Add multiple review queue items in a single append call.
+ */
+export async function addToReviewQueueBatch(
+  items: { text: string; source_type: string; file_name: string }[]
+): Promise<void> {
+  if (!items.length) return;
+  const rows = items.map(it => [
+    `RQ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    it.text, it.source_type, it.file_name, "FALSE", new Date().toISOString(),
+  ]);
+  await appendRows("ReviewQueue", rows);
 }
 
 export async function getUnresolvedQueue(): Promise<any[]> {
@@ -218,6 +283,25 @@ export async function writeLipStock(
   if (keepRows.length) await writeRange("LipStock", `A2:I${keepRows.length + 1}`, keepRows);
   const free = free_qty >= 0 ? free_qty : Math.max(0, qty_on_hand - reserved_qty);
   await appendRows("LipStock", [[today, raw_uid, name_from_source, qty_on_hand, reserved_qty, free, "кг", source, "FALSE"]]);
+}
+
+/**
+ * Write all Lipkovskaya stock rows in one operation (3 API calls total).
+ * Replaces all today's entries in one clear+write instead of N×4 calls.
+ */
+export async function writeLipStockBatch(
+  rows: { raw_uid: string; name_from_source: string; qty: number; source: string }[]
+): Promise<void> {
+  if (!rows.length) return;
+  const today = new Date().toISOString().split("T")[0];
+  const uidsToReplace = new Set(rows.map(r => r.raw_uid));
+  const existing = await readRange("LipStock", "A2:I5000");
+  const keepRows = existing.filter(r => !(r[0] === today && uidsToReplace.has(String(r[1]))));
+  const newRows = rows.map(r => [today, r.raw_uid, r.name_from_source, r.qty, 0, r.qty, "кг", r.source, "FALSE"]);
+  const allRows = [...keepRows, ...newRows];
+  await clearRange("LipStock", "A2:I5000");
+  if (allRows.length) await writeRange("LipStock", `A2:I${allRows.length + 1}`, allRows);
+  invalidateCache();
 }
 
 export async function getLatestLipStock(): Promise<Map<string, number>> {

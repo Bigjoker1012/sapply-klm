@@ -1,9 +1,10 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import {
-  findRawByAlias, addToReviewQueue, addAlias,
-  writePlantStock, writeRecipe, writeRecipeLines, writeNeedFromRecipe,
-  getUnresolvedQueue, resolveQueueItem,
+  matchBatch, addAliasesBatch, addToReviewQueueBatch,
+  writePlantStock, writeLipStockBatch,
+  writeRecipe, writeRecipeLines, writeNeedFromRecipe,
+  getUnresolvedQueue, resolveQueueItem, addAlias,
 } from "../services/sheetsService";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
 import { parsePolotskExcel, parseRecipeExcel } from "../services/excelParser";
@@ -11,7 +12,7 @@ import { parsePolotskExcel, parseRecipeExcel } from "../services/excelParser";
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
 
-// ─── Загрузка квартального Excel / PDF остатков Полоцка ───────────────────
+// ─── Загрузка Excel / PDF остатков Полоцка ────────────────────────────────────
 
 router.post("/polotsk", upload.single("file"), async (req: Request, res: Response) => {
   if (!req.file) return res.status(400).json({ error: "Файл не найден" });
@@ -21,25 +22,82 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
       ? await parsePolotskPdf(req.file.buffer)
       : parsePolotskExcel(req.file.buffer);
 
+    // 1. Match ALL names in one batch (2 API calls: Syryo + Aliases)
+    const matchMap = await matchBatch(parsed.map(r => r.rawName));
+
+    const stockRows: { raw_uid: string; name_from_source: string; qty: number; source_file: string }[] = [];
+    const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
     let matched = 0;
     let unmatched = 0;
-    const stockRows: { raw_uid: string; name_from_source: string; qty: number; source_file: string }[] = [];
 
     for (const row of parsed) {
-      const rawUid = await findRawByAlias(row.rawName);
+      const rawUid = matchMap.get(row.rawName);
       if (rawUid) {
         stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source_file: req.file!.originalname });
-        await addAlias(rawUid, row.rawName, "polotsk_file");
+        newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "polotsk_file" });
         matched++;
       } else {
-        await addToReviewQueue(row.rawName, "polotsk", req.file!.originalname);
+        queueItems.push({ text: row.rawName, source_type: "polotsk", file_name: req.file!.originalname });
         unmatched++;
       }
     }
 
-    if (stockRows.length) await writePlantStock(stockRows);
+    // 2. Write stock + aliases + queue in parallel (each is 1-2 calls)
+    await Promise.all([
+      stockRows.length ? writePlantStock(stockRows) : Promise.resolve(),
+      newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
+      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+    ]);
 
     res.json({ ok: true, total: parsed.length, matched, unmatched, message: `Загружено: ${matched}, не распознано: ${unmatched}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Загрузка Excel остатков Липковской ───────────────────────────────────────
+
+router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Response) => {
+  if (!req.file) return res.status(400).json({ error: "Файл не найден" });
+  try {
+    const parsed = parsePolotskExcel(req.file.buffer);
+
+    // 1. Match ALL names in one batch
+    const matchMap = await matchBatch(parsed.map(r => r.rawName));
+
+    const stockRows: { raw_uid: string; name_from_source: string; qty: number; source: string }[] = [];
+    const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
+    let matched = 0;
+    let unmatched = 0;
+
+    for (const row of parsed) {
+      const rawUid = matchMap.get(row.rawName);
+      if (rawUid) {
+        stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source: "excel_file" });
+        newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "lipkovskaya_file" });
+        matched++;
+      } else {
+        queueItems.push({ text: row.rawName, source_type: "lipkovskaya", file_name: req.file!.originalname });
+        unmatched++;
+      }
+    }
+
+    // 2. Write all in parallel (3 API calls total vs N×4 before)
+    await Promise.all([
+      writeLipStockBatch(stockRows),
+      newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
+      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+    ]);
+
+    res.json({
+      ok: true,
+      total: parsed.length,
+      matched,
+      unmatched,
+      message: `Загружено: ${matched}, не распознано: ${unmatched}`,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -57,6 +115,10 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     const base_batch_kg = parseFloat(req.body?.batchQty) || 1000;
 
+    // 1. Match ALL recipe row names at once
+    const matchMap = await matchBatch(parsed.rows.map(r => r.rawName));
+
+    // 2. Write recipe header
     const recipeUid = await writeRecipe({
       code: parsed.code,
       full_name: parsed.name,
@@ -75,9 +137,11 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     let unmatched = 0;
     const lines: Parameters<typeof writeRecipeLines>[1] = [];
     const needLines: { raw_uid: string; net_qty: number }[] = [];
+    const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
 
     for (const row of parsed.rows) {
-      const rawUid = await findRawByAlias(row.rawName);
+      const rawUid = matchMap.get(row.rawName) ?? null;
       const consumption_kg = row.quantityPerTon > 0
         ? (row.quantityPerTon / 1000) * base_batch_kg
         : row.percentage > 0
@@ -95,16 +159,22 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       });
 
       if (rawUid) {
-        await addAlias(rawUid, row.rawName, "recipe");
+        newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "recipe" });
         if (consumption_kg > 0) needLines.push({ raw_uid: rawUid, net_qty: consumption_kg });
         matched++;
       } else {
-        await addToReviewQueue(row.rawName, "recipe", req.file!.originalname);
+        queueItems.push({ text: row.rawName, source_type: "recipe", file_name: req.file!.originalname });
         unmatched++;
       }
     }
 
-    await writeRecipeLines(recipeUid, lines);
+    // 3. Write lines, aliases, queue in parallel
+    await Promise.all([
+      writeRecipeLines(recipeUid, lines),
+      newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
+      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+    ]);
+
     if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines);
 
     res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched });

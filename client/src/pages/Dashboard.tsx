@@ -98,8 +98,10 @@ export default function Dashboard() {
   const [showLipForm, setShowLipForm]   = useState(false);
 
   const [polotskFile, setPolotskFile]     = useState<File | null>(null);
+  const [lipFile, setLipFile]             = useState<File | null>(null);
   const [recipeFile, setRecipeFile]       = useState<File | null>(null);
   const [polotskStatus, setPolotskStatus] = useState('');
+  const [lipStatus, setLipStatus]         = useState('');
   const [recipeStatus, setRecipeStatus]   = useState('');
 
   const [inboundForm, setInboundForm] = useState({ raw_uid: '', raw_name: '', qty: '', eta: '', destination: '', document: '' });
@@ -139,6 +141,24 @@ export default function Dashboard() {
       load();
     } catch (e: any) {
       setPolotskStatus(`❌ ${e.response?.data?.error || 'Ошибка загрузки'}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleLipUpload = async () => {
+    if (!lipFile) return;
+    setUploading(true);
+    setLipStatus('Обработка...');
+    try {
+      const fd = new FormData();
+      fd.append('file', lipFile);
+      const r = await axios.post(`${API}/upload/lipkovskaya`, fd);
+      setLipStatus(`✅ ${r.data.message}`);
+      setLipFile(null);
+      load();
+    } catch (e: any) {
+      setLipStatus(`❌ ${e.response?.data?.error || 'Ошибка загрузки'}`);
     } finally {
       setUploading(false);
     }
@@ -301,15 +321,30 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* Липковская — ручной ввод */}
+            {/* Липковская — Excel + ручной ввод */}
             <div className="border border-yellow-700 rounded-lg p-4 bg-gray-800/50">
               <div className="font-semibold text-white text-sm mb-1">🏛 Липковская (Минск)</div>
-              <div className="text-xs text-gray-400 mb-3">Ручной ввод остатков</div>
+              {lipStatus && (
+                <div className={`text-xs mb-2 ${lipStatus.startsWith('✅') ? 'text-green-300' : 'text-red-300'}`}>{lipStatus}</div>
+              )}
+              <input
+                type="file" accept=".xlsx,.xls"
+                onChange={e => { setLipFile(e.target.files?.[0] || null); setLipStatus(''); }}
+                className="text-xs text-gray-300 mb-2 w-full"
+              />
+              {lipFile && <p className="text-xs text-gray-400 mb-2 truncate">{lipFile.name}</p>}
+              <button
+                onClick={handleLipUpload}
+                disabled={!lipFile || uploading}
+                className="w-full border border-yellow-600 text-yellow-400 text-sm py-1.5 rounded hover:bg-yellow-500/10 disabled:opacity-40 transition mb-2"
+              >
+                {uploading && lipFile ? 'Обработка...' : 'Загрузить Excel'}
+              </button>
               <button
                 onClick={() => setShowLipForm(!showLipForm)}
-                className="w-full border border-yellow-600 text-yellow-400 text-sm py-1.5 rounded hover:bg-yellow-500/10 transition"
+                className="w-full border border-gray-600 text-gray-400 text-xs py-1 rounded hover:bg-gray-700 transition"
               >
-                {showLipForm ? '▲ Скрыть форму' : '+ Ввести остаток'}
+                {showLipForm ? '▲ Скрыть ручной ввод' : '+ Ввести вручную'}
               </button>
             </div>
 
