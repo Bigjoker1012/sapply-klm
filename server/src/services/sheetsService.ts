@@ -6,6 +6,30 @@ function getConn() {
   return new ReplitConnectors();
 }
 
+/** Parse numbers that may use comma as decimal separator (European locale from Google Sheets) */
+function parseNum(v: any): number {
+  if (v == null || v === "") return 0;
+  const s = String(v).replace(/\s/g, "").replace(",", ".");
+  return parseFloat(s) || 0;
+}
+
+// ─── In-memory TTL cache ────────────────────────────────────────────────────
+const cache = new Map<string, { data: any; expiry: number }>();
+const CACHE_TTL = 30_000; // 30 seconds
+
+function cacheGet<T>(key: string): T | undefined {
+  const entry = cache.get(key);
+  if (entry && Date.now() < entry.expiry) return entry.data as T;
+  cache.delete(key);
+  return undefined;
+}
+function cacheSet(key: string, data: any): void {
+  cache.set(key, { data, expiry: Date.now() + CACHE_TTL });
+}
+export function invalidateCache(): void {
+  cache.clear();
+}
+
 async function sheetGet(path: string) {
   const c = getConn();
   const r = await c.proxy("google-sheet", path, { method: "GET" });
@@ -34,15 +58,22 @@ async function sheetPut(path: string, body: object) {
 
 export async function readRange(sheet: string, range: string): Promise<any[][]> {
   const fullRange = `${sheet}!${range}`;
+  const cacheKey = `range:${fullRange}`;
+  const cached = cacheGet<any[][]>(cacheKey);
+  if (cached) return cached;
   const d = await sheetGet(`/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}`);
-  return d.values || [];
+  const result = d.values || [];
+  cacheSet(cacheKey, result);
+  return result;
 }
 
 export async function clearRange(sheet: string, range: string): Promise<void> {
+  invalidateCache();
   await sheetPost(`/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(`${sheet}!${range}`)}:clear`, {});
 }
 
 export async function writeRange(sheet: string, range: string, values: any[][]): Promise<void> {
+  invalidateCache();
   await sheetPut(
     `/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(`${sheet}!${range}`)}?valueInputOption=USER_ENTERED`,
     { values }
@@ -50,6 +81,7 @@ export async function writeRange(sheet: string, range: string, values: any[][]):
 }
 
 export async function appendRows(sheet: string, values: any[][]): Promise<void> {
+  invalidateCache();
   await sheetPost(
     `/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(`${sheet}!A1`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     { values }
@@ -78,9 +110,9 @@ export async function getAllRawMaterials(): Promise<RawMaterial[]> {
       full_name: String(r[1] || ""),
       short_name: String(r[2] || ""),
       unit: String(r[3] || "кг"),
-      avg_monthly_usage: parseFloat(r[4]) || 0,
-      reorder_threshold_factor: parseFloat(r[5]) || 0.5,
-      lead_time_days: parseInt(r[6]) || 30,
+      avg_monthly_usage: parseNum(r[4]),
+      reorder_threshold_factor: parseNum(r[5]) || 0.5,
+      lead_time_days: parseInt(String(r[6])) || 30,
       active: String(r[7]).toUpperCase() !== "FALSE",
     }));
 }
@@ -168,7 +200,7 @@ export async function getLatestPlantStock(): Promise<Map<string, number>> {
   const rows = await readRange("PlantStock", "A2:G5000");
   const map = new Map<string, number>();
   for (const r of rows) {
-    if (r[1]) map.set(String(r[1]), parseFloat(r[3]) || 0);
+    if (r[1]) map.set(String(r[1]), parseNum(r[3]));
   }
   return map;
 }
@@ -193,7 +225,7 @@ export async function getLatestLipStock(): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   for (const r of rows) {
     if (r[1]) {
-      const free = parseFloat(r[5]) >= 0 ? parseFloat(r[5]) : Math.max(0, (parseFloat(r[3]) || 0) - (parseFloat(r[4]) || 0));
+      const free = parseNum(r[5]) > 0 ? parseNum(r[5]) : Math.max(0, parseNum(r[3]) - parseNum(r[4]));
       map.set(String(r[1]), free);
     }
   }
@@ -204,8 +236,8 @@ export async function getLipStockList(): Promise<any[]> {
   const rows = await readRange("LipStock", "A2:I5000");
   return rows.filter(r => r[0]).map(r => ({
     snapshot_date: r[0], raw_uid: r[1], name_from_source: r[2],
-    qty_on_hand: parseFloat(r[3]) || 0, reserved_qty: parseFloat(r[4]) || 0,
-    free_qty: parseFloat(r[5]) || 0, unit: r[6], source: r[7],
+    qty_on_hand: parseNum(r[3]), reserved_qty: parseNum(r[4]),
+    free_qty: parseNum(r[5]), unit: r[6], source: r[7],
   }));
 }
 
@@ -222,7 +254,7 @@ export async function addInbound(
 export async function getInboundList(): Promise<any[]> {
   const rows = await readRange("Inbound", "A2:H5000");
   return rows.filter(r => r[0] && String(r[6]).toLowerCase() !== "получено").map(r => ({
-    id: r[0], raw_uid: r[1], raw_name: r[2], qty: parseFloat(r[3]) || 0,
+    id: r[0], raw_uid: r[1], raw_name: r[2], qty: parseNum(r[3]),
     eta: r[4], destination: r[5], status: r[6], document: r[7],
   }));
 }
@@ -248,7 +280,7 @@ export async function getInboundTotals(): Promise<Map<string, number>> {
     const status = String(r[6] || "").toLowerCase();
     if (r[1] && status !== "получено" && status !== "удалено") {
       const cur = map.get(String(r[1])) || 0;
-      map.set(String(r[1]), cur + (parseFloat(r[3]) || 0));
+      map.set(String(r[1]), cur + parseNum(r[3]));
     }
   }
   return map;
@@ -271,7 +303,7 @@ export async function getNeedTotals(): Promise<Map<string, number>> {
   for (const r of rows) {
     if (r[2]) {
       const cur = map.get(String(r[2])) || 0;
-      map.set(String(r[2]), cur + (parseFloat(r[6]) || 0));
+      map.set(String(r[2]), cur + parseNum(r[6]));
     }
   }
   return map;
@@ -309,8 +341,8 @@ export async function getRecipesList(): Promise<any[]> {
   const rows = await readRange("Recipes", "A2:M5000");
   return rows.filter(r => r[0]).map(r => ({
     recipe_uid: r[0], code: r[1], full_name: r[2], premix_name: r[3],
-    date: r[4], batch_t: parseFloat(r[6]) || 0, customer: r[7], status: r[11],
-    base_batch_kg: parseFloat(r[12]) || 1000,
+    date: r[4], batch_t: parseNum(r[6]), customer: r[7], status: r[11],
+    base_batch_kg: parseNum(r[12]) || 1000,
   }));
 }
 

@@ -1,8 +1,40 @@
 import { Router, Request, Response } from "express";
-import { computeDecisions, readRange } from "../services/sheetsService";
+import {
+  computeDecisions, readRange, getAllRawMaterials,
+  getInboundList, getUnresolvedQueue,
+} from "../services/sheetsService";
 import * as XLSX from "xlsx";
 
 const router = Router();
+
+/** Combined endpoint — one round-trip from the browser loads everything */
+router.get("/all", async (_req: Request, res: Response) => {
+  try {
+    const [decisions, rawMaterials, inbound, unmatched, plant, queue] = await Promise.all([
+      computeDecisions(),
+      getAllRawMaterials(),
+      getInboundList(),
+      getUnresolvedQueue(),
+      readRange("PlantStock", "A2:A5000"),
+      readRange("ReviewQueue", "A2:E5000"),
+    ]);
+    const lastPlant = plant.filter((r: any[]) => r[0]).pop()?.[0] || null;
+    const unresolvedQueue = queue.filter((r: any[]) => r[0] && String(r[4] || "").toUpperCase() !== "TRUE").length;
+    res.json({
+      decisions,
+      rawMaterials,
+      inbound,
+      unmatched,
+      status: {
+        plant_last_update: lastPlant,
+        active_inbound_count: inbound.length,
+        unresolved_review_count: unresolvedQueue,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get("/decisions", async (_req: Request, res: Response) => {
   try {

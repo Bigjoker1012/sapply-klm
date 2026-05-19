@@ -20,9 +20,12 @@ interface Decision {
 }
 
 interface RawMaterial {
-  id: string;
-  uid: string;
-  name: string;
+  raw_uid: string;
+  full_name: string;
+  short_name: string;
+  unit: string;
+  avg_monthly_usage: number;
+  active: boolean;
 }
 
 interface InboundItem {
@@ -89,6 +92,7 @@ export default function Dashboard() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [search, setSearch]             = useState('');
   const [loading, setLoading]           = useState(false);
+  const [loadError, setLoadError]       = useState('');
   const [uploading, setUploading]       = useState(false);
   const [showSynonyms, setShowSynonyms] = useState(false);
   const [showLipForm, setShowLipForm]   = useState(false);
@@ -103,21 +107,18 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
-      const [dec, raw, ib, unm, st] = await Promise.all([
-        axios.get(`${API}/dashboard/decisions`),
-        axios.get(`${API}/raw-materials`),
-        axios.get(`${API}/in-transit`),
-        axios.get(`${API}/upload/unmatched`),
-        axios.get(`${API}/dashboard/status`),
-      ]);
-      setDecisions(dec.data);
-      setRawMaterials(raw.data);
-      setInbound(ib.data);
-      setUnmatched(unm.data);
-      setDashStatus(st.data);
-    } catch (e) {
-      console.error(e);
+      const { data } = await axios.get(`${API}/dashboard/all`);
+      setDecisions(data.decisions ?? []);
+      setRawMaterials(data.rawMaterials ?? []);
+      setInbound(data.inbound ?? []);
+      setUnmatched(data.unmatched ?? []);
+      setDashStatus(data.status ?? null);
+    } catch (e: any) {
+      const msg = e?.response?.data?.error || e?.message || String(e);
+      setLoadError(msg);
+      console.error('Dashboard load error:', e);
     } finally {
       setLoading(false);
     }
@@ -166,7 +167,7 @@ export default function Dashboard() {
     try {
       await axios.post(`${API}/in-transit`, {
         raw_uid: inboundForm.raw_uid,
-        raw_name: rawMaterials.find(r => r.uid === inboundForm.raw_uid)?.name || inboundForm.raw_uid,
+        raw_name: rawMaterials.find(r => r.raw_uid === inboundForm.raw_uid)?.full_name || inboundForm.raw_uid,
         quantity: parseFloat(inboundForm.qty),
         eta: inboundForm.eta,
         direction: inboundForm.destination,
@@ -186,7 +187,7 @@ export default function Dashboard() {
       const reserved = parseFloat(lipForm.reserved_qty || '0');
       await axios.post(`${API}/inventory/lipkovskaya`, {
         raw_uid: lipForm.raw_uid,
-        name_from_source: rawMaterials.find(r => r.uid === lipForm.raw_uid)?.name || lipForm.raw_uid,
+        name_from_source: rawMaterials.find(r => r.raw_uid === lipForm.raw_uid)?.full_name || lipForm.raw_uid,
         qty_on_hand: total,
         reserved_qty: reserved,
         free_qty: Math.max(0, total - reserved),
@@ -240,6 +241,7 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-4 text-sm text-gray-400">
           {loading && <span className="text-xs text-blue-400 animate-pulse">загрузка...</span>}
+          {loadError && <span className="text-xs text-red-400" title={loadError}>⚠ ошибка загрузки</span>}
           <span className="text-xs">📅 {new Date().toLocaleDateString('ru-RU')}</span>
           <button onClick={load} className="text-xs border border-gray-700 text-gray-400 px-2 py-1 rounded hover:bg-gray-800 transition">
             ↻ Обновить
@@ -347,7 +349,7 @@ export default function Dashboard() {
               >
                 <option value="">Выбрать сырьё...</option>
                 {rawMaterials.map(rm => (
-                  <option key={rm.uid} value={rm.uid}>{rm.name}</option>
+                  <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>
                 ))}
               </select>
               <input
@@ -406,7 +408,7 @@ export default function Dashboard() {
             >
               <option value="">Выбрать сырьё...</option>
               {rawMaterials.map(rm => (
-                <option key={rm.uid} value={rm.uid}>{rm.name}</option>
+                <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>
               ))}
             </select>
             <input
@@ -508,7 +510,11 @@ export default function Dashboard() {
                 {filtered.length === 0 && (
                   <tr>
                     <td colSpan={10} className="text-center py-8 text-gray-600">
-                      {loading ? 'Загрузка данных из Google Sheets...' : 'Нет данных. Загрузите остатки и рецепт.'}
+                      {loading
+                        ? 'Загрузка данных из Google Sheets...'
+                        : loadError
+                          ? <span className="text-red-400">Ошибка: {loadError}</span>
+                          : 'Нет данных. Загрузите остатки и рецепт.'}
                     </td>
                   </tr>
                 )}
@@ -590,7 +596,7 @@ function UnmatchedRow({ item, rawMaterials, onConfirm }: {
       >
         <option value="">Выберите сырьё...</option>
         {rawMaterials.map(rm => (
-          <option key={rm.uid} value={rm.uid}>{rm.name}</option>
+          <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>
         ))}
       </select>
       <button
@@ -644,7 +650,7 @@ function SynonymsPanel({ rawMaterials, onClose, onRefresh }: {
           required
         >
           <option value="">Выбрать сырьё...</option>
-          {rawMaterials.map(rm => <option key={rm.uid} value={rm.uid}>{rm.name}</option>)}
+          {rawMaterials.map(rm => <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>)}
         </select>
         <input
           value={form.synonym}

@@ -10,10 +10,6 @@ channel = "stable-25_05"
 localPort = 5000
 externalPort = 80
 
-[[ports]]
-localPort = 8080
-externalPort = 80
-
 [workflows]
 runButton = "Project"
 
@@ -30,10 +26,10 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npx concurrently \"npx ts-node --transpile-only -P server/tsconfig.json server/src/index.ts\" \"npx vite --config client/vite.config.ts\""
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npx concurrently \"npx ts-node --transpile-only -P server/tsconfig.json server/src/index.ts\" \"cd client && npx vite\""
+waitForPort = 5000
