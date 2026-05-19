@@ -1,33 +1,31 @@
-import { Router, Request, Response } from 'express';
-import { pool } from '../index';
+import { Router, Request, Response } from "express";
+import { getRecipesList, readRange } from "../services/sheetsService";
 
 const router = Router();
 
-// Список рецептов
-router.get('/', async (req: Request, res: Response) => {
+router.get("/", async (_req: Request, res: Response) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM recipes ORDER BY date DESC'
-    );
-    res.json(result.rows);
+    const list = await getRecipesList();
+    res.json(list);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Строки рецепта
-router.get('/:id/lines', async (req: Request, res: Response) => {
+router.get("/:uid/lines", async (req: Request, res: Response) => {
   try {
-    const result = await pool.query(`
-      SELECT rl.id, rl.recipe_id, rl.raw_material_id,
-             rm.uid, rm.name,
-             rl.percentage, rl.quantity_per_ton
-      FROM recipe_lines rl
-      LEFT JOIN raw_materials rm ON rl.raw_material_id = rm.id
-      WHERE rl.recipe_id = $1
-      ORDER BY rl.id
-    `, [req.params.id]);
-    res.json(result.rows);
+    const rows = await readRange("RecipeLines", "A2:L5000");
+    const lines = rows
+      .filter(r => r[1] === req.params.uid)
+      .map(r => ({
+        id: r[0], recipe_uid: r[1], raw_uid: r[2],
+        name_from_recipe: r[3], activity: r[4],
+        input_pct: parseFloat(r[5]) || 0,
+        norm_g_per_t: parseFloat(r[6]) || 0,
+        consumption_kg: parseFloat(r[7]) || 0,
+        match_status: r[11],
+      }));
+    res.json(lines);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

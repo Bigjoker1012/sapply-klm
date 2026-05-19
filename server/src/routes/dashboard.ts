@@ -1,128 +1,62 @@
-import { Router, Request, Response } from 'express';
-import { pool } from '../index';
-import * as XLSX from 'xlsx';
+import { Router, Request, Response } from "express";
+import { computeDecisions, readRange } from "../services/sheetsService";
+import * as XLSX from "xlsx";
 
 const router = Router();
 
-// Главный запрос — управленческие решения
-router.get('/decisions', async (req: Request, res: Response) => {
+router.get("/decisions", async (_req: Request, res: Response) => {
   try {
-    const result = await pool.query(`
-      SELECT
-        rm.id,
-        rm.uid                             AS "код сырья",
-        rm.name                            AS "наименование",
-        rm.avg_monthly_consumption         AS "среднемесячный расход",
-        rm.purchase_threshold              AS "порог закупки",
-        COALESCE(ps.quantity, 0)           AS "остаток Полоцк",
-        COALESCE(ls.free_quantity, 0)      AS "свободно Липковская",
-        COALESCE(it.qty, 0)                AS "в пути",
-        COALESCE(n.planned_requirement, 0) AS "плановая потребность",
-        (COALESCE(ps.quantity,0) + COALESCE(ls.free_quantity,0) + COALESCE(it.qty,0)) AS "доступно",
-        GREATEST(0,
-          COALESCE(n.planned_requirement,0)
-          - COALESCE(ps.quantity,0)
-          - COALESCE(ls.free_quantity,0)
-          - COALESCE(it.qty,0)
-        ) AS "закупка",
-        CASE
-          WHEN (COALESCE(ps.quantity,0) + COALESCE(ls.free_quantity,0) + COALESCE(it.qty,0))
-               < COALESCE(n.planned_requirement,0)
-          THEN 'СРОЧНО ЗАКУПАТЬ'
-          WHEN (COALESCE(ps.quantity,0) + COALESCE(ls.free_quantity,0))
-               < COALESCE(n.planned_requirement,0) * 0.3
-          THEN 'ПЛАНИРОВАТЬ ЗАКУПКУ'
-          WHEN COALESCE(ls.free_quantity,0) > 0
-               AND COALESCE(ps.quantity,0) < COALESCE(n.planned_requirement,0) * 0.2
-          THEN 'ПЕРЕВЕЗТИ С ЛИПКОВСКОЙ'
-          ELSE 'ЗАПАС В НОРМЕ'
-        END AS "статус"
-      FROM raw_materials rm
-      LEFT JOIN (
-        SELECT DISTINCT ON (raw_material_id)
-          raw_material_id, quantity
-        FROM polotsk_stock ORDER BY raw_material_id, date DESC
-      ) ps ON rm.id = ps.raw_material_id
-      LEFT JOIN (
-        SELECT DISTINCT ON (raw_material_id)
-          raw_material_id, free_quantity
-        FROM lipkovskaya_stock ORDER BY raw_material_id, date DESC
-      ) ls ON rm.id = ls.raw_material_id
-      LEFT JOIN (
-        SELECT raw_material_id, SUM(quantity) AS qty
-        FROM in_transit WHERE status != 'принято'
-        GROUP BY raw_material_id
-      ) it ON rm.id = it.raw_material_id
-      LEFT JOIN (
-        SELECT DISTINCT ON (raw_material_id)
-          raw_material_id, planned_requirement
-        FROM need ORDER BY raw_material_id, date DESC
-      ) n ON rm.id = n.raw_material_id
-      ORDER BY
-        CASE
-          WHEN (COALESCE(ps.quantity,0)+COALESCE(ls.free_quantity,0)+COALESCE(it.qty,0)) < COALESCE(n.planned_requirement,0) THEN 1
-          WHEN (COALESCE(ps.quantity,0)+COALESCE(ls.free_quantity,0)) < COALESCE(n.planned_requirement,0)*0.3 THEN 2
-          ELSE 3
-        END, rm.name
-    `);
-    res.json(result.rows);
+    const decisions = await computeDecisions();
+    res.json(decisions);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Экспорт в Excel
-router.get('/export', async (req: Request, res: Response) => {
+router.get("/status", async (_req: Request, res: Response) => {
   try {
-    const result = await pool.query(`
-      SELECT
-        rm.uid AS "Код сырья", rm.name AS "Наименование",
-        COALESCE(ps.quantity,0) AS "Полоцк КХП, кг",
-        COALESCE(ls.free_quantity,0) AS "Свободно Липковская, кг",
-        COALESCE(it.qty,0) AS "В пути, кг",
-        COALESCE(n.planned_requirement,0) AS "Плановая потребность, кг",
-        GREATEST(0, COALESCE(n.planned_requirement,0) - COALESCE(ps.quantity,0)
-          - COALESCE(ls.free_quantity,0) - COALESCE(it.qty,0)) AS "Закупить, кг",
-        CASE
-          WHEN (COALESCE(ps.quantity,0)+COALESCE(ls.free_quantity,0)+COALESCE(it.qty,0)) < COALESCE(n.planned_requirement,0) THEN 'СРОЧНО ЗАКУПАТЬ'
-          WHEN (COALESCE(ps.quantity,0)+COALESCE(ls.free_quantity,0)) < COALESCE(n.planned_requirement,0)*0.3 THEN 'ПЛАНИРОВАТЬ ЗАКУПКУ'
-          WHEN COALESCE(ls.free_quantity,0) > 0 AND COALESCE(ps.quantity,0) < COALESCE(n.planned_requirement,0)*0.2 THEN 'ПЕРЕВЕЗТИ С ЛИПКОВСКОЙ'
-          ELSE 'ЗАПАС В НОРМЕ'
-        END AS "Статус"
-      FROM raw_materials rm
-      LEFT JOIN (SELECT DISTINCT ON (raw_material_id) raw_material_id, quantity FROM polotsk_stock ORDER BY raw_material_id, date DESC) ps ON rm.id = ps.raw_material_id
-      LEFT JOIN (SELECT DISTINCT ON (raw_material_id) raw_material_id, free_quantity FROM lipkovskaya_stock ORDER BY raw_material_id, date DESC) ls ON rm.id = ls.raw_material_id
-      LEFT JOIN (SELECT raw_material_id, SUM(quantity) AS qty FROM in_transit WHERE status!='принято' GROUP BY raw_material_id) it ON rm.id = it.raw_material_id
-      LEFT JOIN (SELECT DISTINCT ON (raw_material_id) raw_material_id, planned_requirement FROM need ORDER BY raw_material_id, date DESC) n ON rm.id = n.raw_material_id
-      ORDER BY rm.name
-    `);
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(result.rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'Решения');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-    res.setHeader('Content-Disposition', `attachment; filename="decisions_${new Date().toISOString().split('T')[0]}.xlsx"`);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.send(buf);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Последнее обновление данных
-router.get('/status', async (req: Request, res: Response) => {
-  try {
-    const polotsk = await pool.query('SELECT MAX(date) as last FROM polotsk_stock');
-    const lipkovskaya = await pool.query('SELECT MAX(date) as last FROM lipkovskaya_stock');
-    const transit = await pool.query('SELECT COUNT(*) as count FROM in_transit WHERE status!=\'принято\'');
-    const unmatched = await pool.query('SELECT COUNT(*) as count FROM unmatched_queue WHERE resolved=false');
+    const [plant, inbound, queue] = await Promise.all([
+      readRange("PlantStock", "A2:A5000"),
+      readRange("Inbound", "A2:G5000"),
+      readRange("ReviewQueue", "A2:E5000"),
+    ]);
+    const lastPlant = plant.filter(r => r[0]).pop()?.[0] || null;
+    const activeInbound = inbound.filter(r => r[0] && !["получено", "удалено"].includes(String(r[6] || "").toLowerCase())).length;
+    const unresolvedQueue = queue.filter(r => r[0] && String(r[4] || "").toUpperCase() !== "TRUE").length;
     res.json({
-      polotsk_last: polotsk.rows[0].last,
-      lipkovskaya_last: lipkovskaya.rows[0].last,
-      transit_count: transit.rows[0].count,
-      unmatched_count: unmatched.rows[0].count,
+      plant_last_update: lastPlant,
+      active_inbound_count: activeInbound,
+      unresolved_review_count: unresolvedQueue,
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/export", async (_req: Request, res: Response) => {
+  try {
+    const decisions = await computeDecisions();
+    const rows = decisions.map(d => ({
+      "Код сырья": d.raw_uid,
+      "Наименование": d.name,
+      "Ср. расход кг/мес": d.avg_monthly_usage,
+      "Порог закупки кг": d.threshold_qty,
+      "Полоцк кг": d.plant_qty,
+      "Липковская кг": d.lip_qty,
+      "В пути кг": d.inbound_qty,
+      "Потребность кг": d.planned_need,
+      "Доступно кг": d.available_total,
+      "Ост. после плана кг": d.expected_after_plan,
+      "Статус": d.status,
+      "Переброска с Липковской кг": d.cover_by_transfer,
+      "Закупить кг": d.cover_by_purchase,
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Решения");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    res.setHeader("Content-Disposition", `attachment; filename="decisions_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.send(buf);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

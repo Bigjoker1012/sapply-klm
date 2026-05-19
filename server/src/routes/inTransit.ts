@@ -1,58 +1,44 @@
-import { Router, Request, Response } from 'express';
-import { pool } from '../index';
+import { Router, Request, Response } from "express";
+import {
+  addInbound, getInboundList, updateInboundStatus, deleteInbound,
+} from "../services/sheetsService";
 
 const router = Router();
 
-// Все поставки в пути
-router.get('/', async (req: Request, res: Response) => {
+router.get("/", async (_req: Request, res: Response) => {
   try {
-    const result = await pool.query(`
-      SELECT it.id, it.raw_material_id, rm.uid, rm.name,
-             it.quantity, it.eta, it.direction, it.status, it.comment, it.created_at
-      FROM in_transit it
-      JOIN raw_materials rm ON it.raw_material_id = rm.id
-      WHERE it.status != 'принято'
-      ORDER BY it.eta ASC
-    `);
-    res.json(result.rows);
+    const list = await getInboundList();
+    res.json(list);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Добавить поставку в пути
-router.post('/', async (req: Request, res: Response) => {
-  const { rawMaterialId, quantity, eta, direction, comment } = req.body;
+router.post("/", async (req: Request, res: Response) => {
+  const { raw_uid, raw_name, rawMaterialId, quantity, eta, direction, document, comment } = req.body;
   try {
-    const result = await pool.query(
-      `INSERT INTO in_transit (raw_material_id, quantity, eta, direction, status, comment)
-       VALUES ($1,$2,$3,$4,'ожидается',$5) RETURNING *`,
-      [rawMaterialId, quantity, eta, direction || '', comment || '']
-    );
-    res.json(result.rows[0]);
+    const uid = raw_uid || rawMaterialId;
+    const name = raw_name || rawMaterialId || "";
+    const id = await addInbound(uid, name, parseFloat(quantity), eta, direction || "", document || comment || "");
+    res.json({ ok: true, id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Изменить статус поставки
-router.patch('/:id/status', async (req: Request, res: Response) => {
+router.patch("/:id/status", async (req: Request, res: Response) => {
   const { status } = req.body;
   try {
-    const result = await pool.query(
-      'UPDATE in_transit SET status=$1 WHERE id=$2 RETURNING *',
-      [status, req.params.id]
-    );
-    res.json(result.rows[0]);
+    await updateInboundStatus(req.params.id, status);
+    res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Удалить поставку
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete("/:id", async (req: Request, res: Response) => {
   try {
-    await pool.query('DELETE FROM in_transit WHERE id=$1', [req.params.id]);
+    await deleteInbound(req.params.id);
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
