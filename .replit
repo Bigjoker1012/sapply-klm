@@ -39,4 +39,6 @@ args = "npx concurrently \"npx ts-node --transpile-only -P server/tsconfig.json 
 waitForPort = 5000
 
 [deployment]
-deploymentTarget = "cloudrun"
+deploymentTarget = "autoscale"
+run = ["npm", "start"]
+build = ["npm", "run", "build"]
