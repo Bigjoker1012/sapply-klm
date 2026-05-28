@@ -31,7 +31,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/raw-materials", rawMaterialsRoutes);
 
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString(), storage: "Google Sheets" });
+  res.json({ status: "ok", timestamp: new Date().toISOString(), storage: "SQLite" });
 });
 
 const clientBuild = path.join(process.cwd(), "dist", "client");
