@@ -14,7 +14,8 @@
     "db:init": "psql $DATABASE_URL < database.sql",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "ts-node --transpile-only -P server/tsconfig.json server/src/db/migrate.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "seed:catalog": "ts-node --transpile-only -P server/tsconfig.json server/src/scripts/seed-catalog.ts"
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1",

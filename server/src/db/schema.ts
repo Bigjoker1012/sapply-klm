@@ -64,8 +64,8 @@ export const warehouse = sqliteTable("warehouse", {
 /** Поставщик (Адиссео, БАСФ, Эвоник…) */
 export const supplier = sqliteTable("supplier", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  /** Название */
-  name: text("name").notNull(),
+  /** Название (уникально — гарантия для seed-catalog placeholder и UI-импорта) */
+  name: text("name").notNull().unique(),
   /** Страна */
   country: text("country"),
   /** ИНН/УНП */
