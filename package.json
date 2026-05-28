@@ -11,7 +11,10 @@
     "build:client": "vite build --config client/vite.config.ts",
     "build:server": "tsc -p server/tsconfig.json",
     "start": "node dist/server/src/index.js",
-    "db:init": "psql $DATABASE_URL < database.sql"
+    "db:init": "psql $DATABASE_URL < database.sql",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "ts-node --transpile-only -P server/tsconfig.json server/src/db/migrate.ts",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1",
