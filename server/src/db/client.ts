@@ -12,7 +12,17 @@ import * as schema from "./schema";
 import * as fs from "fs";
 import * as path from "path";
 
-const dbPath = process.env.DATABASE_URL ?? path.resolve(process.cwd(), "data/supply-klm.db");
+function resolveSqlitePath(): string {
+  const raw = process.env.DATABASE_URL;
+  // Если в env стоит postgres-овский URL (наследие старой версии),
+  // игнорируем и берём дефолтный SQLite-файл — иначе better-sqlite3 создаст
+  // директорию с именем `postgresql:/...` (баг был, проверено).
+  if (!raw || /^postgres(ql)?:\/\//i.test(raw)) {
+    return path.resolve(process.cwd(), "data/supply-klm.db");
+  }
+  return raw;
+}
+const dbPath = resolveSqlitePath();
 
 // Гарантируем что директория существует
 const dir = path.dirname(dbPath);

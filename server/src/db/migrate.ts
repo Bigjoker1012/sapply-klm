@@ -52,7 +52,10 @@ export function runMigrations(dbPath: string): { applied: string[]; skipped: str
 }
 
 if (require.main === module) {
-  const dbPath = process.env.DATABASE_URL ?? path.resolve(process.cwd(), "data/supply-klm.db");
+  const raw = process.env.DATABASE_URL;
+  const dbPath = (!raw || /^postgres(ql)?:\/\//i.test(raw))
+    ? path.resolve(process.cwd(), "data/supply-klm.db")
+    : raw;
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const { applied, skipped } = runMigrations(dbPath);

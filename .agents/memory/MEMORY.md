@@ -1,0 +1,3 @@
+- [SQLite DATABASE_URL guard](sqlite-database-url-guard.md) — если env содержит postgres-URL, better-sqlite3 создаст директорию с этим именем; всегда фильтруй схему.
+- [Drizzle 0.36 insert types](drizzle-036-insert-types.md) — insert-типы для колонок с default() слишком узкие; либо `as any`, либо raw `sql\`INSERT OR IGNORE\`` (последнее даёт идемпотентность бесплатно).
+- [Login hardening pattern](login-hardening.md) — обязательный набор: всегда bcrypt.compare против dummy-хеша при miss + in-memory rate-limit по ip|login + единое сообщение «Неверный email или пароль».

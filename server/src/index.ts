@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
+import { bootstrap } from "./auth/bootstrap";
 
 dotenv.config();
 
@@ -42,6 +43,13 @@ app.get("*", (req, res) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Server on port ${port} | Storage: Google Sheets`);
-});
+bootstrap()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`Server on port ${port} | Storage: SQLite + Google Sheets (legacy)`);
+    });
+  })
+  .catch((err) => {
+    console.error("[bootstrap] failed:", err);
+    process.exit(1);
+  });

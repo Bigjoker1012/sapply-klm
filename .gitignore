@@ -4,3 +4,7 @@ dist/
 *.log
 .DS_Store
 uploads/
+data/
+*.db
+*.db-shm
+*.db-wal
