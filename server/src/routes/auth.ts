@@ -86,7 +86,7 @@ router.post("/login", async (req: Request, res: Response) => {
     return res.status(429).json({ error: "Слишком много попыток входа. Попробуйте позже." });
   }
 
-  const rows = db.select().from(user).where(eq(user.login, login)).all();
+  const rows = await db.select().from(user).where(eq(user.login, login));
   const u = rows[0];
 
   // Унифицированное сообщение и единое время отклика, чтобы не подсказывать,
@@ -106,14 +106,14 @@ router.post("/login", async (req: Request, res: Response) => {
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  db.insert(session).values({
+  await db.insert(session).values({
     tokenHash,
     userId: u.id,
     expiresAt,
     ip: (req.ip ?? req.socket.remoteAddress ?? "").toString().slice(0, 64),
-  } as any).run();
+  } as any);
 
-  db.update(user).set({ lastLoginAt: new Date().toISOString() } as any).where(eq(user.id, u.id)).run();
+  await db.update(user).set({ lastLoginAt: new Date().toISOString() } as any).where(eq(user.id, u.id));
 
   return res.json({
     token,
@@ -131,7 +131,7 @@ router.post("/logout", requireAuth, async (req: Request, res: Response) => {
   const header = req.headers.authorization ?? "";
   const token = header.replace(/^Bearer\s+/i, "").trim();
   if (token) {
-    db.delete(session).where(eq(session.tokenHash, hashToken(token))).run();
+    await db.delete(session).where(eq(session.tokenHash, hashToken(token)));
   }
   return res.json({ ok: true });
 });

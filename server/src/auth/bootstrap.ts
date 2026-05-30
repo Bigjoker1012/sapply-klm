@@ -1,28 +1,21 @@
 /**
- * Бутстрап: при старте сервера прокатывает миграции и сидит организацию,
- * базовые склады и 4-х seed-пользователей (admin/snabzhenets/tehnolog/viewer)
- * с паролем по умолчанию, чтобы можно было залогиниться сразу.
+ * Бутстрап: при старте сервера сидит организацию, базовые склады и 4-х
+ * seed-пользователей (admin/snabzhenets/tehnolog/viewer) с паролем по
+ * умолчанию, чтобы можно было залогиниться сразу.
+ *
+ * Схему БД создаёт НЕ этот код (drizzle-kit push в dev / publish-diff в prod) —
+ * здесь только идемпотентный сид данных (DML, не DDL).
  *
  * SEED_USER_PASSWORD из env, иначе "klm2026" (как было в старой in-memory).
  */
-import path from "path";
 import bcrypt from "bcrypt";
-import { runMigrations } from "../db/migrate";
+import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { user, organization, warehouse, UserRole } from "../db/schema";
-import { sql } from "drizzle-orm";
 
 const BCRYPT_ROUNDS = 10;
 const DEFAULT_PASSWORD = process.env.SEED_USER_PASSWORD ?? "klm2026";
 const IS_PROD = process.env.NODE_ENV === "production";
-
-function resolveSqlitePath(): string {
-  const raw = process.env.DATABASE_URL;
-  if (!raw || /^postgres(ql)?:\/\//i.test(raw)) {
-    return path.resolve(process.cwd(), "data/supply-klm.db");
-  }
-  return raw;
-}
 
 interface SeedUser {
   login: string;
@@ -43,52 +36,57 @@ export async function bootstrap(): Promise<void> {
     throw new Error("В production обязательно задайте SEED_USER_PASSWORD в env (отличный от дефолта).");
   }
 
-  const dbPath = resolveSqlitePath();
-  const { applied, skipped } = runMigrations(dbPath);
-  if (applied.length) console.log(`[db] Migrations applied: ${applied.join(", ")}`);
-  if (skipped.length) console.log(`[db] Migrations already at version: ${skipped[skipped.length - 1]}`);
-
-  // Сид. INSERT OR IGNORE по уникальным ключам — идемпотентно при повторных
+  // Сид. onConflictDoNothing по уникальным ключам — идемпотентно при повторных
   // запусках и устойчиво к гонкам параллельных bootstrap-ов.
   // Делаем в одной транзакции — либо всё, либо ничего.
   const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, BCRYPT_ROUNDS);
 
-  const orgId: number = db.transaction((dbx) => {
-    dbx.run(sql`
-      INSERT OR IGNORE INTO organization (code, name)
-      VALUES ('KHP_POLOTSK', 'Полоцкий КХП')
-    `);
-    const oid = (dbx.get(sql`SELECT id FROM organization WHERE code = 'KHP_POLOTSK'`) as { id: number }).id;
+  const orgId = await db.transaction(async (tx) => {
+    await tx
+      .insert(organization)
+      .values({ code: "KHP_POLOTSK", name: "Полоцкий КХП" } as any)
+      .onConflictDoNothing();
+    const [org] = await tx
+      .select({ id: organization.id })
+      .from(organization)
+      .where(eq(organization.code, "KHP_POLOTSK"));
+    const oid = org.id;
 
-    dbx.run(sql`
-      INSERT OR IGNORE INTO warehouse (organization_id, code, name, is_main)
-      VALUES (${oid}, 'POLOTSK', 'Полоцк', 1)
-    `);
-    dbx.run(sql`
-      INSERT OR IGNORE INTO warehouse (organization_id, code, name, is_main)
-      VALUES (${oid}, 'LIPKOV', 'Липковская', 0)
-    `);
+    await tx
+      .insert(warehouse)
+      .values([
+        { organizationId: oid, code: "POLOTSK", name: "Полоцк", isMain: true },
+        { organizationId: oid, code: "LIPKOV", name: "Липковская", isMain: false },
+      ] as any)
+      .onConflictDoNothing();
 
     for (const u of SEED_USERS) {
-      dbx.run(sql`
-        INSERT OR IGNORE INTO user (login, password_hash, name, role, organization_id, active)
-        VALUES (${u.login}, ${passwordHash}, ${u.name}, ${u.role}, ${oid}, 1)
-      `);
+      await tx
+        .insert(user)
+        .values({
+          login: u.login,
+          passwordHash,
+          name: u.name,
+          role: u.role,
+          organizationId: oid,
+          active: true,
+        } as any)
+        .onConflictDoNothing();
     }
     return oid;
   });
 
-  console.log(`[seed] organization=${orgId}, warehouses + ${SEED_USERS.length} users (idempotent INSERT OR IGNORE)`);
+  console.log(`[seed] organization=${orgId}, warehouses + ${SEED_USERS.length} users (idempotent onConflictDoNothing)`);
   if (!IS_PROD && !process.env.SEED_USER_PASSWORD) {
     console.log(`[seed] dev-режим: используется встроенный seed-пароль. Для прода задайте SEED_USER_PASSWORD в env.`);
   }
 
-  // Сид каталога SKU из коммитнутого JSON-снимка. В проде dev-БД из data/ не
-  // коммитится, поэтому без этого приложение поднялось бы с пустым каталогом.
-  // Идемпотентно. Ошибка сида не должна ронять сервер — логируем и продолжаем.
+  // Сид каталога SKU из коммитнутого JSON-снимка. В проде каталог надо наполнить
+  // при первом старте. Идемпотентно. Ошибка сида не должна ронять сервер —
+  // логируем и продолжаем.
   try {
     const { runCatalogSeed } = await import("../scripts/seed-catalog");
-    const r = runCatalogSeed();
+    const r = await runCatalogSeed();
     console.log(`[seed] catalog: sku inserted ${r.inserted}, skipped ${r.skipped} (supplier placeholder id=${r.supplierId})`);
   } catch (err) {
     console.warn("[seed] catalog seed пропущен (не критично для старта):", (err as Error).message);

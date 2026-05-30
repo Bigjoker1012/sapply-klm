@@ -1,37 +1,52 @@
 /**
- * Supply KLM — схема БД (Drizzle ORM + SQLite)
+ * Supply KLM — схема БД (Drizzle ORM + PostgreSQL)
  *
  * Соглашения:
  * - Английские snake_case имена в БД. Русские названия — в JSDoc-комментариях.
  *   В IDE при наведении мышкой на любое поле сразу видна расшифровка.
- * - Даты храним как ISO-строки (`YYYY-MM-DD`) или ISO-timestamp (`YYYY-MM-DDTHH:mm:ssZ`).
- *   SQLite не имеет native DATE/TIMESTAMP, текст — самый совместимый вариант.
- * - Денежные суммы и количества — `real` (double). Для премиксного учёта точности
- *   double хватает с большим запасом (~15 значащих цифр).
+ * - Даты храним как ISO-строки (`YYYY-MM-DD`) или ISO-timestamp
+ *   (`YYYY-MM-DDTHH:mm:ss.sssZ`) в колонках типа text. Так строковое сравнение
+ *   (gt/lt по expiresAt и т.п.) совпадает с хронологическим, а JS-парсеры не
+ *   спотыкаются о пробел/таймзону. Дефолт генерит to_char(now() ... 'Z').
+ * - Денежные суммы и количества — double precision (float8). Для премиксного
+ *   учёта точности double хватает с большим запасом (~15 значащих цифр).
  * - Все статусы и enum-поля — текстовые литералы через `text({ enum: [...] })`.
+ *   Это переносимо и не требует отдельных pg-enum типов/миграций.
  * - Каскадных удалений нет: историю не теряем. Деактивация через `active: false`
  *   или `status: 'archived' / 'cancelled'`.
+ *
+ * ВАЖНО (миграция с SQLite → PostgreSQL):
+ * - Раньше инварианты учёта держались SQLite-триггерами (миграция
+ *   0001_triggers.sql): поддержание batch.current_qty_kg при списывающих
+ *   движениях, иммутабельность stock_movement, согласованность transfer_batch.
+ *   drizzle-kit не генерирует триггеры, а схему прода Replit применяет diff-ом
+ *   при публикации, поэтому триггеры здесь НЕ воспроизводятся. На текущий момент
+ *   ни один API-роут не пишет в stock_movement/transfer/batch (склад идёт через
+ *   legacy sheetsService), так что инварианты не задействованы. Когда эти write-
+ *   пути переедут на Postgres, инварианты нужно обеспечить в сервисном слое
+ *   (внутри транзакции). CHECK-констрейнты ниже drizzle-kit применяет — они
+ *   остаются на уровне БД.
  *
  * См. /docs/schema.md — там же глоссарий и обоснование решений.
  */
 
-import { sqliteTable, integer, text, real, primaryKey, uniqueIndex, index, check, foreignKey } from "drizzle-orm/sqlite-core";
+import { pgTable, serial, integer, text, doublePrecision, boolean, jsonb, primaryKey, uniqueIndex, index, check, foreignKey, unique } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
 /**
  * ISO-8601 UTC timestamp с миллисекундами ("2026-05-28T14:32:01.123Z").
- * SQLite-овский CURRENT_TIMESTAMP даёт "YYYY-MM-DD HH:MM:SS" без T/Z —
- * парсеры JS на нём ломаются. Используем единый формат везде.
+ * Postgres now() возвращает timestamptz; приводим к UTC и форматируем в тот же
+ * вид, что и new Date().toISOString() в приложении — единый формат везде.
  */
-const nowIso = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+const nowIso = sql`to_char((now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 // ============================================================================
 // 0. Организация (юрлицо / завод верхнего уровня)
 // ============================================================================
 
 /** Организация (юрлицо). Один завод = одна организация. */
-export const organization = sqliteTable("organization", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const organization = pgTable("organization", {
+  id: serial("id").primaryKey(),
   /** Код (KHP_POLOTSK, KHP_GOMEL) */
   code: text("code").notNull().unique(),
   /** Название («Полоцкий КХП») */
@@ -39,7 +54,7 @@ export const organization = sqliteTable("organization", {
   /** ИНН/УНП */
   inn: text("inn"),
   /** Активна (false = архивная) */
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  active: boolean("active").notNull().default(true),
   createdAt: text("created_at").notNull().default(nowIso),
 });
 
@@ -48,8 +63,8 @@ export const organization = sqliteTable("organization", {
 // ============================================================================
 
 /** Склад (Полоцк, Липковская, …) */
-export const warehouse = sqliteTable("warehouse", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const warehouse = pgTable("warehouse", {
+  id: serial("id").primaryKey(),
   /** Организация-владелец */
   organizationId: integer("organization_id").notNull().references(() => organization.id),
   /** Код (POLOTSK, LIPKOV) */
@@ -57,13 +72,13 @@ export const warehouse = sqliteTable("warehouse", {
   /** Название («Полоцкий КХП», «Липковская») */
   name: text("name").notNull(),
   /** Основной (где происходит производство) */
-  isMain: integer("is_main", { mode: "boolean" }).notNull().default(false),
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  isMain: boolean("is_main").notNull().default(false),
+  active: boolean("active").notNull().default(true),
 });
 
 /** Поставщик (Адиссео, БАСФ, Эвоник…) */
-export const supplier = sqliteTable("supplier", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const supplier = pgTable("supplier", {
+  id: serial("id").primaryKey(),
   /** Название (уникально — гарантия для seed-catalog placeholder и UI-импорта) */
   name: text("name").notNull().unique(),
   /** Страна */
@@ -72,7 +87,7 @@ export const supplier = sqliteTable("supplier", {
   inn: text("inn"),
   /** Контакты одной строкой (телефон, email, ФИО менеджера) */
   contact: text("contact"),
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  active: boolean("active").notNull().default(true),
 });
 
 /** Категория сырья */
@@ -80,8 +95,8 @@ export const skuCategory = ["amino_acid", "vitamin", "microelement", "filler", "
 export type SkuCategory = typeof skuCategory[number];
 
 /** Сырьё (мастер-каталог) */
-export const sku = sqliteTable("sku", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const sku = pgTable("sku", {
+  id: serial("id").primaryKey(),
   /** Внутренний код («AA-LYS-985») */
   code: text("code").notNull().unique(),
   /** Название («Лизин монохлоргидрат 98.5%») */
@@ -95,15 +110,15 @@ export const sku = sqliteTable("sku", {
   /** Срок годности по умолчанию (дни) */
   shelfLifeDays: integer("shelf_life_days"),
   /** Страховой запас, кг (порог для статуса «Срочно») */
-  minStockKg: real("min_stock_kg"),
+  minStockKg: doublePrecision("min_stock_kg"),
   /** Точка перезаказа, кг (порог для статуса «К закупке») */
-  reorderPointKg: real("reorder_point_kg"),
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  reorderPointKg: doublePrecision("reorder_point_kg"),
+  active: boolean("active").notNull().default(true),
 });
 
 /** Альтернативное название сырья (как его пишут в 1С / PDF / Excel — для матчинга загрузок) */
-export const skuAlias = sqliteTable("sku_alias", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const skuAlias = pgTable("sku_alias", {
+  id: serial("id").primaryKey(),
   /** Сырьё */
   skuId: integer("sku_id").notNull().references(() => sku.id),
   /** Вариант написания */
@@ -123,8 +138,8 @@ export const skuAlias = sqliteTable("sku_alias", {
  * Никогда не меняется в количестве напрямую — только через `stockMovement`.
  * `currentQtyKg` — денормализованная сумма движений, пересчитывается сервисом.
  */
-export const batch = sqliteTable("batch", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const batch = pgTable("batch", {
+  id: serial("id").primaryKey(),
   /** Сырьё */
   skuId: integer("sku_id").notNull().references(() => sku.id),
   /** Склад */
@@ -138,11 +153,11 @@ export const batch = sqliteTable("batch", {
   /** Срок годности до (YYYY-MM-DD) */
   expiryDate: text("expiry_date"),
   /** Пришло (исходное кол-во), кг */
-  initialQtyKg: real("initial_qty_kg").notNull(),
+  initialQtyKg: doublePrecision("initial_qty_kg").notNull(),
   /** Текущий остаток, кг (derived из движений) */
-  currentQtyKg: real("current_qty_kg").notNull(),
+  currentQtyKg: doublePrecision("current_qty_kg").notNull(),
   /** Цена за кг */
-  unitPrice: real("unit_price"),
+  unitPrice: doublePrecision("unit_price"),
   /** Валюта (BYN / RUB / USD / EUR) */
   currency: text("currency"),
   /** № сертификата качества */
@@ -159,9 +174,11 @@ export const batch = sqliteTable("batch", {
     .where(sql`${t.lotNo} IS NOT NULL`),
   byExpiry: index("batch_expiry_idx").on(t.expiryDate),
   byCurrent: index("batch_current_idx").on(t.skuId, t.warehouseId, t.status),
-  // Композитный ключ (id, sku_id, warehouse_id) — нужен чтобы из transfer_batch
-  // делать FK, гарантирующий совпадение sku/склада с переброской.
-  identityIdx: uniqueIndex("batch_identity_unique").on(t.id, t.skuId, t.warehouseId),
+  // Композитный UNIQUE-констрейнт (id, sku_id, warehouse_id) — нужен чтобы из
+  // transfer_batch делать FK, гарантирующий совпадение sku/склада с переброской.
+  // В Postgres FK может ссылаться только на UNIQUE/PK-констрейнт (не на индекс),
+  // поэтому здесь именно unique(), а не uniqueIndex().
+  identity: unique("batch_identity_unique").on(t.id, t.skuId, t.warehouseId),
   // Инвентарные инварианты
   qtyNonNeg: check("batch_qty_nonneg", sql`${t.initialQtyKg} >= 0 AND ${t.currentQtyKg} >= 0`),
   qtyNotOver: check("batch_qty_le_initial", sql`${t.currentQtyKg} <= ${t.initialQtyKg}`),
@@ -178,15 +195,23 @@ export const movementKind = [
   "correction",    // ручная корректировка (инвентаризация)
 ] as const;
 
-/** Движение по партии (приход / расход / переброска / списание / корректировка) */
-export const stockMovement = sqliteTable("stock_movement", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+/**
+ * Движение по партии (приход / расход / переброска / списание / корректировка).
+ *
+ * ВНИМАНИЕ: иммутабельность (запрет UPDATE/DELETE) и автоматический пересчёт
+ * batch.current_qty_kg раньше обеспечивались SQLite-триггерами. В PostgreSQL на
+ * Replit (схема прода применяется diff-ом при публикации) триггеры не
+ * воспроизводятся — эти инварианты нужно соблюдать в сервисном слое при
+ * появлении write-путей.
+ */
+export const stockMovement = pgTable("stock_movement", {
+  id: serial("id").primaryKey(),
   /** Партия */
   batchId: integer("batch_id").notNull().references(() => batch.id),
   /** Тип движения */
   kind: text("kind", { enum: movementKind }).notNull(),
   /** Количество, кг (всегда положительное; знак выводится из kind) */
-  qtyKg: real("qty_kg").notNull(),
+  qtyKg: doublePrecision("qty_kg").notNull(),
   /** Тип связанной сущности (production_plan / transfer / upload_job / manual) */
   refType: text("ref_type"),
   /** ID связанной сущности */
@@ -203,8 +228,8 @@ export const stockMovement = sqliteTable("stock_movement", {
 }));
 
 /** Снимок остатков на дату (для аудита и отката загрузок) */
-export const stockSnapshot = sqliteTable("stock_snapshot", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const stockSnapshot = pgTable("stock_snapshot", {
+  id: serial("id").primaryKey(),
   /** Склад */
   warehouseId: integer("warehouse_id").notNull().references(() => warehouse.id),
   /** Дата снимка (YYYY-MM-DD) */
@@ -212,9 +237,11 @@ export const stockSnapshot = sqliteTable("stock_snapshot", {
   /** Источник (`upload_job:42`, `manual`) */
   source: text("source").notNull(),
   /** Сырой остаток как JSON: [{sku_id, qty_kg}, ...] */
-  payloadJson: text("payload_json", { mode: "json" }).notNull(),
+  payloadJson: jsonb("payload_json").notNull(),
   createdAt: text("created_at").notNull().default(nowIso),
-});
+}, (t) => ({
+  byWhCreated: index("stock_snapshot_wh_created_idx").on(t.warehouseId, t.createdAt),
+}));
 
 // ============================================================================
 // 3. Рецепты и план производства
@@ -224,8 +251,8 @@ export const stockSnapshot = sqliteTable("stock_snapshot", {
 export const targetAnimal = ["pigs", "poultry", "cattle", "other"] as const;
 
 /** Рецепт премикса (версионированный) */
-export const recipe = sqliteTable("recipe", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const recipe = pgTable("recipe", {
+  id: serial("id").primaryKey(),
   /** Шифр («П-12», «Р-СВ-15») */
   code: text("code").notNull(),
   /** Название («Премикс свиньи откорм 1%») */
@@ -251,29 +278,31 @@ export const recipe = sqliteTable("recipe", {
 }));
 
 /** Состав рецепта — какое сырьё и в какой дозировке */
-export const recipeItem = sqliteTable("recipe_item", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const recipeItem = pgTable("recipe_item", {
+  id: serial("id").primaryKey(),
   /** Рецепт */
   recipeId: integer("recipe_id").notNull().references(() => recipe.id),
   /** Сырьё */
   skuId: integer("sku_id").notNull().references(() => sku.id),
   /** Дозировка, кг на тонну премикса */
-  doseKgPerT: real("dose_kg_per_t").notNull(),
+  doseKgPerT: doublePrecision("dose_kg_per_t").notNull(),
   /** Порядок отображения */
   sortOrder: integer("sort_order").notNull().default(0),
   note: text("note"),
 }, (t) => ({
   uniqueRecipeSku: uniqueIndex("recipe_item_recipe_sku_unique").on(t.recipeId, t.skuId),
+  // Индекс под подзапрос planned_need дашборда (JOIN recipe_item ON sku_id = ?)
+  bySku: index("recipe_item_sku_idx").on(t.skuId, t.recipeId),
   dosePos: check("recipe_item_dose_pos", sql`${t.doseKgPerT} > 0`),
 }));
 
 /** План производства (что и когда смешиваем) */
-export const productionPlan = sqliteTable("production_plan", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const productionPlan = pgTable("production_plan", {
+  id: serial("id").primaryKey(),
   /** Рецепт */
   recipeId: integer("recipe_id").notNull().references(() => recipe.id),
   /** Количество, т (плановое) */
-  qtyT: real("qty_t").notNull(),
+  qtyT: doublePrecision("qty_t").notNull(),
   /** Плановая дата (YYYY-MM-DD) */
   plannedDate: text("planned_date").notNull(),
   /** Склад (где производим) */
@@ -281,12 +310,14 @@ export const productionPlan = sqliteTable("production_plan", {
   /** Статус (planned / in_progress / done / cancelled) */
   status: text("status", { enum: ["planned", "in_progress", "done", "cancelled"] }).notNull().default("planned"),
   /** Фактически произведено, т */
-  actualQtyT: real("actual_qty_t"),
+  actualQtyT: doublePrecision("actual_qty_t"),
   /** Когда завершено (ISO timestamp) */
   doneAt: text("done_at"),
 }, (t) => ({
   byDate: index("plan_date_idx").on(t.plannedDate, t.status),
   byWh: index("plan_wh_date_idx").on(t.warehouseId, t.plannedDate, t.status),
+  // Индекс под подзапрос planned_need дашборда (фильтр status + JOIN по recipe_id)
+  byRecipeStatus: index("production_plan_recipe_status_idx").on(t.recipeId, t.status),
   qtyPos: check("plan_qty_pos", sql`${t.qtyT} > 0`),
   actualPos: check("plan_actual_nonneg", sql`${t.actualQtyT} IS NULL OR ${t.actualQtyT} >= 0`),
 }));
@@ -296,8 +327,8 @@ export const productionPlan = sqliteTable("production_plan", {
 // ============================================================================
 
 /** Поступление в пути (сырьё, которое едет к нам) */
-export const inTransit = sqliteTable("in_transit", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const inTransit = pgTable("in_transit", {
+  id: serial("id").primaryKey(),
   /** Сырьё */
   skuId: integer("sku_id").notNull().references(() => sku.id),
   /** Поставщик */
@@ -305,9 +336,9 @@ export const inTransit = sqliteTable("in_transit", {
   /** Куда придёт */
   warehouseId: integer("warehouse_id").notNull().references(() => warehouse.id),
   /** Количество, кг */
-  qtyKg: real("qty_kg").notNull(),
+  qtyKg: doublePrecision("qty_kg").notNull(),
   /** Цена за кг */
-  unitPrice: real("unit_price"),
+  unitPrice: doublePrecision("unit_price"),
   /** Валюта */
   currency: text("currency"),
   /** Ожидаемая дата поступления (YYYY-MM-DD) */
@@ -330,8 +361,8 @@ export const inTransit = sqliteTable("in_transit", {
 }));
 
 /** Переброска между складами (Полоцк ↔ Липковская) */
-export const transfer = sqliteTable("transfer", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const transfer = pgTable("transfer", {
+  id: serial("id").primaryKey(),
   /** Сырьё */
   skuId: integer("sku_id").notNull().references(() => sku.id),
   /** Откуда */
@@ -339,7 +370,7 @@ export const transfer = sqliteTable("transfer", {
   /** Куда */
   toWarehouseId: integer("to_warehouse_id").notNull().references(() => warehouse.id),
   /** Количество, кг */
-  qtyKg: real("qty_kg").notNull(),
+  qtyKg: doublePrecision("qty_kg").notNull(),
   /** Статус (planned / in_transit / received / cancelled) */
   status: text("status", { enum: ["planned", "in_transit", "received", "cancelled"] }).notNull().default("planned"),
   /** Плановая дата (YYYY-MM-DD) */
@@ -362,11 +393,10 @@ export const transfer = sqliteTable("transfer", {
  * Денормализуем `batchSkuId` / `batchWarehouseId` (= sku/склад партии) и
  * композитный FK на (batch.id, sku_id, warehouse_id) — это гарантирует,
  * что батч физически совпадает с тем, что указано в переброске.
- * Сервис обязан подставить sku/склад из batch при вставке; согласованность
- * с `transfer.sku_id` и `transfer.from_warehouse_id` проверяется триггером
- * (см. миграцию `0001_transfer_batch_guard.sql`).
+ * Согласованность с `transfer.sku_id` и `transfer.from_warehouse_id` раньше
+ * проверялась SQLite-триггером; в Postgres её нужно проверять в сервисном слое.
  */
-export const transferBatch = sqliteTable("transfer_batch", {
+export const transferBatch = pgTable("transfer_batch", {
   /** Переброска */
   transferId: integer("transfer_id").notNull().references(() => transfer.id),
   /** Партия */
@@ -376,7 +406,7 @@ export const transferBatch = sqliteTable("transfer_batch", {
   /** Склад партии (= источник переброски) */
   batchWarehouseId: integer("batch_warehouse_id").notNull().references(() => warehouse.id),
   /** Количество из этой партии, кг */
-  qtyKg: real("qty_kg").notNull(),
+  qtyKg: doublePrecision("qty_kg").notNull(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.transferId, t.batchId] }),
   qtyPos: check("transfer_batch_qty_pos", sql`${t.qtyKg} > 0`),
@@ -390,16 +420,16 @@ export const transferBatch = sqliteTable("transfer_batch", {
 }));
 
 /** Заказ поставщику (рождается из кнопки «Заказать N кг» на дашборде) */
-export const purchaseOrder = sqliteTable("purchase_order", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const purchaseOrder = pgTable("purchase_order", {
+  id: serial("id").primaryKey(),
   /** Сырьё */
   skuId: integer("sku_id").notNull().references(() => sku.id),
   /** Поставщик */
   supplierId: integer("supplier_id").notNull().references(() => supplier.id),
   /** Количество, кг */
-  qtyKg: real("qty_kg").notNull(),
+  qtyKg: doublePrecision("qty_kg").notNull(),
   /** Цена за кг */
-  unitPrice: real("unit_price"),
+  unitPrice: doublePrecision("unit_price"),
   /** Валюта */
   currency: text("currency"),
   /** Статус (draft / sent / confirmed / cancelled / fulfilled) */
@@ -432,8 +462,8 @@ export const uploadKind = [
 ] as const;
 
 /** Загрузка файла (Excel / PDF) */
-export const uploadJob = sqliteTable("upload_job", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const uploadJob = pgTable("upload_job", {
+  id: serial("id").primaryKey(),
   /** Тип файла */
   kind: text("kind", { enum: uploadKind }).notNull(),
   /** Имя файла */
@@ -460,8 +490,8 @@ export const uploadJob = sqliteTable("upload_job", {
 }));
 
 /** Сырая строка загрузки (до маппинга на справочник sku) */
-export const uploadRow = sqliteTable("upload_row", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const uploadRow = pgTable("upload_row", {
+  id: serial("id").primaryKey(),
   /** Задание загрузки */
   uploadJobId: integer("upload_job_id").notNull().references(() => uploadJob.id),
   /** Индекс строки в исходном файле */
@@ -469,11 +499,11 @@ export const uploadRow = sqliteTable("upload_row", {
   /** Имя листа Excel (для многолистовых файлов) */
   sheetName: text("sheet_name"),
   /** Сырая строка целиком (JSON) */
-  rawPayload: text("raw_payload", { mode: "json" }).notNull(),
+  rawPayload: jsonb("raw_payload").notNull(),
   /** Сопоставленное сырьё (если нашли) */
   matchedSkuId: integer("matched_sku_id").references(() => sku.id),
   /** Уверенность распознавания (0..1) */
-  confidence: real("confidence"),
+  confidence: doublePrecision("confidence"),
   /** Действие (auto_apply / manual_review / skip / rejected) */
   action: text("action", { enum: ["auto_apply", "manual_review", "skip", "rejected"] }).notNull().default("manual_review"),
   /** Кто проверил */
@@ -484,11 +514,13 @@ export const uploadRow = sqliteTable("upload_row", {
   reviewNote: text("review_note"),
 }, (t) => ({
   byJob: index("upload_row_job_idx").on(t.uploadJobId, t.action),
+  // loadUnmatched / loadStatus дашборда: фильтр по action перед join на upload_job
+  byActionJob: index("upload_row_action_job_idx").on(t.action, t.uploadJobId),
 }));
 
 /** Журнал событий — аудит каждой правки */
-export const eventLog = sqliteTable("event_log", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const eventLog = pgTable("event_log", {
+  id: serial("id").primaryKey(),
   /** Кто сделал */
   actorId: integer("actor_id").references(() => user.id),
   /** Действие (recipe.create, batch.writeoff, po.send, …) */
@@ -498,9 +530,9 @@ export const eventLog = sqliteTable("event_log", {
   /** ID сущности */
   entityId: integer("entity_id").notNull(),
   /** Состояние до */
-  beforeJson: text("before_json", { mode: "json" }),
+  beforeJson: jsonb("before_json"),
   /** Состояние после */
-  afterJson: text("after_json", { mode: "json" }),
+  afterJson: jsonb("after_json"),
   /** IP клиента */
   ip: text("ip"),
   occurredAt: text("occurred_at").notNull().default(nowIso),
@@ -518,11 +550,11 @@ export const userRole = ["admin", "snabzhenets", "tehnolog", "viewer"] as const;
 export type UserRole = typeof userRole[number];
 
 /** Пользователь */
-export const user = sqliteTable("user", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const user = pgTable("user", {
+  id: serial("id").primaryKey(),
   /** Логин (email или короткий) */
   login: text("login").notNull().unique(),
-  /** Хеш пароля (argon2id) */
+  /** Хеш пароля (bcrypt) */
   passwordHash: text("password_hash").notNull(),
   /** ФИО («Иванов А.С.») */
   name: text("name").notNull(),
@@ -530,7 +562,7 @@ export const user = sqliteTable("user", {
   role: text("role", { enum: userRole }).notNull(),
   /** Привязка к организации (null для admin — видит все) */
   organizationId: integer("organization_id").references(() => organization.id),
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  active: boolean("active").notNull().default(true),
   /** Последний вход (ISO timestamp) */
   lastLoginAt: text("last_login_at"),
   createdAt: text("created_at").notNull().default(nowIso),
@@ -543,7 +575,7 @@ export const user = sqliteTable("user", {
  * Клиенту выдаётся сырой случайный токен (32 байта в base64url),
  * сервер при проверке хеширует поступивший токен и ищет по token_hash.
  */
-export const session = sqliteTable("session", {
+export const session = pgTable("session", {
   /** SHA-256(token) в hex — НЕ сам токен */
   tokenHash: text("token_hash").primaryKey(),
   /** Пользователь */

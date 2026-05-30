@@ -4,14 +4,14 @@
  * Используется двумя путями:
  *   1) CLI: `npm run seed:catalog` (этот файл как entrypoint).
  *   2) bootstrap при старте сервера — вызывает `runCatalogSeed()`, чтобы прод
- *      (где dev-БД из data/ не коммитится) поднялся с наполненным каталогом.
+ *      поднялся с наполненным каталогом.
  *
- * Предусловие: миграции уже накатаны (bootstrap катит их перед сидом).
- * Сам сид миграции не катит — это убирает гонку с параллельным `runMigrations`.
+ * Предусловие: схема БД уже создана (drizzle-kit push в dev / publish-diff в
+ * prod). Сам сид DDL не выполняет.
  *
- * Идемпотентно: `INSERT OR IGNORE` по уникальным индексам
+ * Идемпотентно: `onConflictDoNothing` по уникальным индексам
  *   - `sku_code_unique` (sku.code)
- *   - `supplier_name_unique` (supplier.name, миграция 0003)
+ *   - `supplier_name_unique` (supplier.name)
  * Повторный запуск ничего не дублирует и не затирает отредактированные
  * через UI записи.
  *
@@ -21,8 +21,9 @@
  */
 import fs from "fs";
 import path from "path";
-import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/client";
+import { sku, supplier } from "../db/schema";
 
 interface SkuSeed {
   code: string;
@@ -67,7 +68,7 @@ export interface CatalogSeedResult {
 }
 
 /** Залить каталог SKU + плейсхолдер-поставщика. Идемпотентно. */
-export function runCatalogSeed(): CatalogSeedResult {
+export async function runCatalogSeed(): Promise<CatalogSeedResult> {
   const seedPath = resolveSeedPath();
   const items: SkuSeed[] = JSON.parse(fs.readFileSync(seedPath, "utf8"));
 
@@ -75,39 +76,50 @@ export function runCatalogSeed(): CatalogSeedResult {
   let skipped = 0;
   let supplierId = 0;
 
-  db.transaction((dbx) => {
+  await db.transaction(async (tx) => {
     // Плейсхолдер-поставщик. В Sheets отдельного списка поставщиков нет.
-    // UNIQUE на supplier.name (миграция 0003) гарантирует отсутствие дублей
-    // даже при параллельном сиде.
-    dbx.run(sql`
-      INSERT OR IGNORE INTO supplier (name, active)
-      VALUES (${PLACEHOLDER_SUPPLIER}, 1)
-    `);
-    const row = dbx.get<{ id: number }>(
-      sql`SELECT id FROM supplier WHERE name = ${PLACEHOLDER_SUPPLIER}`,
-    );
-    if (!row) throw new Error("Не удалось получить id плейсхолдер-поставщика");
-    supplierId = row.id;
+    // UNIQUE на supplier.name гарантирует отсутствие дублей даже при
+    // параллельном сиде.
+    await tx
+      .insert(supplier)
+      .values({ name: PLACEHOLDER_SUPPLIER, active: true } as any)
+      .onConflictDoNothing();
+    const [sup] = await tx
+      .select({ id: supplier.id })
+      .from(supplier)
+      .where(eq(supplier.name, PLACEHOLDER_SUPPLIER));
+    if (!sup) throw new Error("Не удалось получить id плейсхолдер-поставщика");
+    supplierId = sup.id;
 
-    for (const s of items) {
+    const values = items.map((s) => {
       // reorderPoint = средний месячный расход × коэф. (legacy-семантика
       // «Коэф. порога закупки»). minStock = половина reorderPoint —
       // эвристика, технолог поправит через UI.
       const reorderPoint = s.avgMonthlyUsageKg * s.reorderThresholdFactor;
       const minStock = reorderPoint * 0.5;
+      return {
+        code: s.code,
+        name: s.name,
+        category: s.category,
+        unit: s.unit,
+        defaultSupplierId: supplierId,
+        shelfLifeDays: null,
+        minStockKg: minStock || null,
+        reorderPointKg: reorderPoint || null,
+        active: s.active,
+      };
+    });
 
-      const result = dbx.run(sql`
-        INSERT OR IGNORE INTO sku (
-          code, name, category, unit, default_supplier_id,
-          shelf_life_days, min_stock_kg, reorder_point_kg, active
-        ) VALUES (
-          ${s.code}, ${s.name}, ${s.category}, ${s.unit}, ${supplierId},
-          NULL, ${minStock || null}, ${reorderPoint || null}, ${s.active ? 1 : 0}
-        )
-      `);
-      // better-sqlite3 возвращает changes: 0 если IGNORE сработал.
-      if ((result as any).changes && (result as any).changes > 0) inserted += 1;
-      else skipped += 1;
+    if (values.length) {
+      // onConflictDoNothing + returning: возвращаются только реально вставленные
+      // строки (конфликтнувшие по sku.code пропускаются).
+      const ins = await tx
+        .insert(sku)
+        .values(values as any)
+        .onConflictDoNothing()
+        .returning({ id: sku.id });
+      inserted = ins.length;
+      skipped = items.length - inserted;
     }
   });
 
@@ -116,14 +128,15 @@ export function runCatalogSeed(): CatalogSeedResult {
 
 // CLI-entrypoint: запускаем только если файл вызван напрямую, а не импортирован.
 if (require.main === module) {
-  try {
-    const r = runCatalogSeed();
-    console.log(
-      `[seed:catalog] supplier placeholder id=${r.supplierId}, sku: inserted ${r.inserted}, skipped ${r.skipped} (уже были)`,
-    );
-    process.exit(0);
-  } catch (err) {
-    console.error("[seed:catalog] ошибка:", err);
-    process.exit(1);
-  }
+  runCatalogSeed()
+    .then((r) => {
+      console.log(
+        `[seed:catalog] supplier placeholder id=${r.supplierId}, sku: inserted ${r.inserted}, skipped ${r.skipped} (уже были)`,
+      );
+      process.exit(0);
+    })
+    .catch((err) => {
+      console.error("[seed:catalog] ошибка:", err);
+      process.exit(1);
+    });
 }

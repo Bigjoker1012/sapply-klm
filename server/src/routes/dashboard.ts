@@ -5,7 +5,7 @@
  *   GET /api/dashboard/status     — короткий статус-блок
  *   GET /api/dashboard/export     — выгрузка решений в XLSX
  *
- * Источник данных: новая SQLite-схема (см. server/src/db/schema.ts).
+ * Источник данных: новая PostgreSQL-схема (см. server/src/db/schema.ts).
  * Раньше — Google Sheets через sheetsService.ts (этот файл уже не импортируем).
  *
  * Форма ответа сохранена под текущий фронт client/src/pages/Dashboard.tsx.
@@ -81,13 +81,13 @@ interface UnmatchedDto {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /** Активные SKU + остатки по двум складам + ETA-приход + плановая потребность. */
-function loadAggregates() {
+async function loadAggregates() {
   /**
    * Один большой read-only join: каждая активная SKU + SUM остатков по
    * POLOTSK/LIPKOV (только активные партии) + сумма in_transit (не received)
    * + плановая потребность (production_plan planned/in_progress * recipe_item).
    */
-  const rows = db.all(sql`
+  const rows = (await db.execute(sql`
     SELECT
       s.id                                      AS sku_id,
       s.code                                    AS raw_uid,
@@ -115,9 +115,9 @@ function loadAggregates() {
         WHERE ri.sku_id = s.id AND pp.status IN ('planned','in_progress')
       ), 0)                                     AS planned_need
     FROM sku s
-    WHERE s.active = 1
+    WHERE s.active = true
     ORDER BY s.name
-  `) as Array<{
+  `)).rows as Array<{
     sku_id: number; raw_uid: string; name: string; unit: string;
     threshold_qty: number; min_stock_kg: number;
     plant_qty: number; lip_qty: number; inbound_qty: number; planned_need: number;
@@ -126,8 +126,8 @@ function loadAggregates() {
 }
 
 /** Полный список сырья для блока «справочник». */
-function loadRawMaterials(): RawMaterialDto[] {
-  const rows = db.all(sql`
+async function loadRawMaterials(): Promise<RawMaterialDto[]> {
+  const rows = (await db.execute(sql`
     SELECT
       s.code     AS raw_uid,
       s.name     AS full_name,
@@ -137,9 +137,9 @@ function loadRawMaterials(): RawMaterialDto[] {
       s.active   AS active
     FROM sku s
     ORDER BY s.name
-  `) as Array<{
+  `)).rows as Array<{
     raw_uid: string; full_name: string; short_name: string; unit: string;
-    reorder_point_kg: number; active: number;
+    reorder_point_kg: number; active: boolean;
   }>;
   return rows.map(r => ({
     raw_uid: r.raw_uid,
@@ -151,13 +151,13 @@ function loadRawMaterials(): RawMaterialDto[] {
     // Сохраняем форму фронта: коэффициент 0.5, дни 30 — дефолты.
     reorder_threshold_factor: 0.5,
     lead_time_days: 30,
-    active: r.active === 1,
+    active: r.active === true,
   }));
 }
 
 /** Список «в пути» — для нижнего блока на дашборде. */
-function loadInbound(): InboundDto[] {
-  const rows = db.all(sql`
+async function loadInbound(): Promise<InboundDto[]> {
+  const rows = (await db.execute(sql`
     SELECT
       it.id          AS id,
       s.code         AS raw_uid,
@@ -171,7 +171,7 @@ function loadInbound(): InboundDto[] {
     JOIN warehouse w ON w.id = it.warehouse_id
     WHERE it.status IN ('at_supplier','in_transit','customs')
     ORDER BY COALESCE(it.eta_date, '9999-12-31'), it.id
-  `) as Array<{
+  `)).rows as Array<{
     id: number; raw_uid: string; raw_name: string; qty: number;
     eta: string | null; destination: string; status: string;
   }>;
@@ -195,14 +195,14 @@ function loadInbound(): InboundDto[] {
  * который тоже ещё на старом sheetsService — поэтому подтверждение не сработает,
  * пока upload-роут не переписан. На пустой БД ничего не отдаём — фронт не упадёт.
  */
-function loadUnmatched(): UnmatchedDto[] {
-  const rows = db.all(sql`
+async function loadUnmatched(): Promise<UnmatchedDto[]> {
+  const rows = (await db.execute(sql`
     SELECT
       ur.id        AS id,
       COALESCE(
-        json_extract(ur.raw_payload, '$.name'),
-        json_extract(ur.raw_payload, '$.full_name'),
-        json_extract(ur.raw_payload, '$.raw_name'),
+        ur.raw_payload->>'name',
+        ur.raw_payload->>'full_name',
+        ur.raw_payload->>'raw_name',
         ''
       )            AS original_text,
       uj.kind      AS source_type,
@@ -212,7 +212,7 @@ function loadUnmatched(): UnmatchedDto[] {
     WHERE ur.action = 'manual_review' AND uj.status = 'review'
     ORDER BY ur.id DESC
     LIMIT 200
-  `) as Array<{ id: number; original_text: string; source_type: string; file_name: string }>;
+  `)).rows as Array<{ id: number; original_text: string; source_type: string; file_name: string }>;
   return rows.map(r => ({
     id: String(r.id),
     original_text: r.original_text,
@@ -222,29 +222,29 @@ function loadUnmatched(): UnmatchedDto[] {
 }
 
 /** Короткий статус-блок (последнее обновление, in-transit, review-очередь). */
-function loadStatus() {
-  const lastPlantRow = db.get(sql`
+async function loadStatus() {
+  const lastPlantRow = (await db.execute(sql`
     SELECT MAX(ss.created_at) AS last_update
     FROM stock_snapshot ss
     JOIN warehouse w ON w.id = ss.warehouse_id
     WHERE w.code = 'POLOTSK'
-  `) as { last_update: string | null } | undefined;
+  `)).rows[0] as { last_update: string | null } | undefined;
 
-  const activeInboundRow = db.get(sql`
+  const activeInboundRow = (await db.execute(sql`
     SELECT COUNT(*) AS c FROM in_transit
     WHERE status IN ('at_supplier','in_transit','customs')
-  `) as { c: number };
+  `)).rows[0] as { c: number | string };
 
-  const unresolvedRow = db.get(sql`
+  const unresolvedRow = (await db.execute(sql`
     SELECT COUNT(*) AS c FROM upload_row ur
     JOIN upload_job uj ON uj.id = ur.upload_job_id
     WHERE ur.action = 'manual_review' AND uj.status = 'review'
-  `) as { c: number };
+  `)).rows[0] as { c: number | string };
 
   return {
     plant_last_update: lastPlantRow?.last_update ?? null,
-    active_inbound_count: activeInboundRow.c,
-    unresolved_review_count: unresolvedRow.c,
+    active_inbound_count: Number(activeInboundRow.c),
+    unresolved_review_count: Number(unresolvedRow.c),
   };
 }
 
@@ -259,8 +259,8 @@ const STATUS_ORDER: Record<Decision["status"], number> = {
   "Норма": 3,
 };
 
-function computeDecisions(): Decision[] {
-  const aggregates = loadAggregates();
+async function computeDecisions(): Promise<Decision[]> {
+  const aggregates = await loadAggregates();
 
   const decisions: Decision[] = aggregates.map(a => {
     const threshold = a.threshold_qty;            // точка перезаказа (кг)
@@ -309,13 +309,15 @@ function computeDecisions(): Decision[] {
 // Роуты
 // ──────────────────────────────────────────────────────────────────────────────
 
-router.get("/all", (_req: Request, res: Response) => {
+router.get("/all", async (_req: Request, res: Response) => {
   try {
-    const decisions = computeDecisions();
-    const rawMaterials = loadRawMaterials();
-    const inbound = loadInbound();
-    const unmatched = loadUnmatched();
-    const status = loadStatus();
+    const [decisions, rawMaterials, inbound, unmatched, status] = await Promise.all([
+      computeDecisions(),
+      loadRawMaterials(),
+      loadInbound(),
+      loadUnmatched(),
+      loadStatus(),
+    ]);
     res.json({ decisions, rawMaterials, inbound, unmatched, status });
   } catch (err: any) {
     console.error("[dashboard/all]", err);
@@ -323,25 +325,25 @@ router.get("/all", (_req: Request, res: Response) => {
   }
 });
 
-router.get("/decisions", (_req: Request, res: Response) => {
+router.get("/decisions", async (_req: Request, res: Response) => {
   try {
-    res.json(computeDecisions());
+    res.json(await computeDecisions());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get("/status", (_req: Request, res: Response) => {
+router.get("/status", async (_req: Request, res: Response) => {
   try {
-    res.json(loadStatus());
+    res.json(await loadStatus());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.get("/export", (_req: Request, res: Response) => {
+router.get("/export", async (_req: Request, res: Response) => {
   try {
-    const decisions = computeDecisions();
+    const decisions = await computeDecisions();
     const rows = decisions.map(d => ({
       "Код сырья": d.raw_uid,
       "Наименование": d.name,

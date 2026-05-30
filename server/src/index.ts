@@ -31,7 +31,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/raw-materials", rawMaterialsRoutes);
 
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString(), storage: "SQLite" });
+  res.json({ status: "ok", timestamp: new Date().toISOString(), storage: "PostgreSQL" });
 });
 
 const clientBuild = path.join(process.cwd(), "dist", "client");
@@ -46,7 +46,7 @@ app.get("*", (req, res) => {
 bootstrap()
   .then(() => {
     app.listen(port, () => {
-      console.log(`Server on port ${port} | Storage: SQLite + Google Sheets (legacy)`);
+      console.log(`Server on port ${port} | Storage: PostgreSQL + Google Sheets (legacy)`);
     });
   })
   .catch((err) => {

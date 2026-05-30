@@ -34,7 +34,7 @@ export async function loadUser(req: Request): Promise<AuthedUser | null> {
   const tokenHash = hashToken(token);
   const nowIso = new Date().toISOString();
 
-  const rows = db
+  const rows = await db
     .select({
       uid: user.id,
       login: user.login,
@@ -45,8 +45,7 @@ export async function loadUser(req: Request): Promise<AuthedUser | null> {
     })
     .from(session)
     .innerJoin(user, eq(session.userId, user.id))
-    .where(and(eq(session.tokenHash, tokenHash), gt(session.expiresAt, nowIso)))
-    .all();
+    .where(and(eq(session.tokenHash, tokenHash), gt(session.expiresAt, nowIso)));
 
   const row = rows[0];
   if (!row || !row.active) return null;

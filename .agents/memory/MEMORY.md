@@ -3,3 +3,4 @@
 - [Login hardening pattern](login-hardening.md) — обязательный набор: всегда bcrypt.compare против dummy-хеша при miss + in-memory rate-limit по ip|login + единое сообщение «Неверный email или пароль».
 - [Legacy payload contract](legacy-payload-contract.md) — при переписывании бэк-роута сначала grep-нуть фронт на точные имена полей: axios не словит расхождение, UI молча покажет пустоту.
 - [tsc не копирует JSON в dist](tsc-json-assets.md) — скрипты с `__dirname`-путём к JSON ломаются в проде; резолвить через массив кандидатов (`__dirname` + `process.cwd()`) или копировать на build.
+- [drizzle-kit push SQL-default drift](drizzle-push-sql-default-drift.md) — колонки с raw-SQL default (to_char/now) каждый push заново шлют ALTER SET DEFAULT; идемпотентно, но шумно — не считать багом.

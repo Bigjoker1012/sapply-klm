@@ -3,7 +3,7 @@
  *   GET /api/recipes            — список (для выбора в UI)
  *   GET /api/recipes/:id/lines  — состав конкретного рецепта
  *
- * Источник данных: новая SQLite-схема (recipe, recipe_item, sku).
+ * Источник данных: новая PostgreSQL-схема (recipe, recipe_item, sku).
  * Форма ответа сохранена под текущий фронт (поля raw_uid, name_from_recipe и т.п.).
  *
  * TODO: добавить requireAuth, когда фронт начнёт слать Bearer-токен.
@@ -14,9 +14,9 @@ import { db } from "../db/client";
 
 const router = Router();
 
-router.get("/", (_req: Request, res: Response) => {
+router.get("/", async (_req: Request, res: Response) => {
   try {
-    const rows = db.all(sql`
+    const rows = (await db.execute(sql`
       SELECT
         r.id            AS recipe_uid,
         r.code          AS code,
@@ -29,7 +29,7 @@ router.get("/", (_req: Request, res: Response) => {
       FROM recipe r
       WHERE r.status IN ('active','draft')
       ORDER BY r.code, r.version DESC
-    `) as Array<{
+    `)).rows as Array<{
       recipe_uid: number; code: string; full_name: string; premix_name: string;
       date: string | null; customer: string; status: string; version: number;
     }>;
@@ -48,13 +48,13 @@ router.get("/", (_req: Request, res: Response) => {
   }
 });
 
-router.get("/:uid/lines", (req: Request, res: Response) => {
+router.get("/:uid/lines", async (req: Request, res: Response) => {
   const recipeId = parseInt(req.params.uid, 10);
   if (!Number.isFinite(recipeId)) {
     return res.status(400).json({ error: "Некорректный recipe_uid" });
   }
   try {
-    const rows = db.all(sql`
+    const rows = (await db.execute(sql`
       SELECT
         ri.id              AS id,
         ri.recipe_id       AS recipe_uid,
@@ -68,7 +68,7 @@ router.get("/:uid/lines", (req: Request, res: Response) => {
       JOIN sku s ON s.id = ri.sku_id
       WHERE ri.recipe_id = ${recipeId}
       ORDER BY ri.sort_order, ri.id
-    `) as Array<{
+    `)).rows as Array<{
       id: number; recipe_uid: number; raw_uid: string; name_from_recipe: string;
       activity: string; dose_kg_per_t: number; sort_order: number; note: string | null;
     }>;

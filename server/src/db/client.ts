@@ -1,38 +1,28 @@
 /**
- * SQLite-клиент Drizzle. Один shared-instance на процесс.
+ * PostgreSQL-клиент Drizzle (Replit-managed Postgres). Один shared connection
+ * pool на процесс.
  *
  * Использование:
  *   import { db } from "./db/client";
  *   import { sku } from "./db/schema";
  *   const items = await db.select().from(sku).where(eq(sku.active, true));
+ *
+ * Схема БД применяется НЕ приложением:
+ *   - dev:  `npm run db:push` (drizzle-kit) + post-merge скрипт;
+ *   - prod: diff dev→prod при публикации Replit.
+ * Поэтому здесь только подключение — никакого DDL при старте.
  */
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
-import * as fs from "fs";
-import * as path from "path";
 
-function resolveSqlitePath(): string {
-  const raw = process.env.DATABASE_URL;
-  // Если в env стоит postgres-овский URL (наследие старой версии),
-  // игнорируем и берём дефолтный SQLite-файл — иначе better-sqlite3 создаст
-  // директорию с именем `postgresql:/...` (баг был, проверено).
-  if (!raw || /^postgres(ql)?:\/\//i.test(raw)) {
-    return path.resolve(process.cwd(), "data/supply-klm.db");
-  }
-  return raw;
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error(
+    "DATABASE_URL не задан. Создайте Replit PostgreSQL (Database tool) — он выставит DATABASE_URL.",
+  );
 }
-const dbPath = resolveSqlitePath();
 
-// Гарантируем что директория существует
-const dir = path.dirname(dbPath);
-if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-const sqlite = new Database(dbPath);
-
-// WAL для одновременных read/write, foreign_keys чтобы FK работали
-sqlite.pragma("journal_mode = WAL");
-sqlite.pragma("foreign_keys = ON");
-
-export const db = drizzle(sqlite, { schema });
+export const pool = new Pool({ connectionString });
+export const db = drizzle(pool, { schema });
 export type Db = typeof db;
