@@ -13,6 +13,8 @@ description: Скрипты, читающие JSON из src через __dirname
 2. Бросить понятную ошибку со списком проверенных путей, чтобы дебажить за 5 секунд.
 3. Альтернатива на build: добавить `cp -R src/**/seed-data dist/...` в `build:server` или включить `"resolveJsonModule": true` + `import data from './seed.json'` — тогда JSON попадёт в бандл через require и не зависит от FS.
 
-**Why:** ts-node прячет эту проблему — всё работает локально, ломается только в проде после `npm run build && node dist/...`. Подтверждено дважды: на JSON-снимке каталога (`seed-catalog.ts`) и на папке SQL-миграций (`migrate.ts`) — прод-бут падал с `Migrations folder not found` именно из-за `__dirname` в `dist`. Папка миграций — такой же ассет, как JSON.
+**Why:** ts-node прячет эту проблему — всё работает локально, ломается только в проде после `npm run build && node dist/...`. Подтверждено трижды: JSON-снимок каталога (`seed-catalog.ts`), папка SQL-миграций (`migrate.ts`, падал с `Migrations folder not found`) и Python-скрипт OCR (`pdfParser.ts` зовёт `python3 dist/.../ocr_recipe.py` — `.py` тоже не копируется). Любой не-`.ts`/`.js` файл рядом с кодом — потенциальная мина.
+
+Доп. грабли с Python-скриптами: их pip-зависимости (тут PyMuPDF/`fitz`) живут в `.pythonlibs` (UV_PROJECT_ENVIRONMENT), который в `.gitignore`. Обязательно декларировать в `pyproject.toml`, иначе зависимость «скрытая» и может не доехать до прод-образа. Системные бинарники (tesseract+`rus`, mupdf/pdftoppm) брать через `replit.nix` — он детерминирован для dev и деплоя.
 
 **How to apply:** при создании нового CLI-скрипта в `server/src/scripts/`, если он читает что-то относительно себя — сразу резолвить через массив кандидатов; не оставлять «потом починим».

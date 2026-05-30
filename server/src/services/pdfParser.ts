@@ -1,7 +1,8 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { writeFile, unlink } from 'fs/promises';
-import { join } from 'path';
+import { existsSync } from 'fs';
+import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import pdfParse from 'pdf-parse';
 
@@ -49,7 +50,28 @@ export async function parsePolotskPdf(buffer: Buffer): Promise<ParsedRow[]> {
 
 // ─── Recipe PDF via OCR (tesseract 5.5) ───────────────────────────────────────
 
-const OCR_SCRIPT = join(__dirname, 'ocr_recipe.py');
+/**
+ * Резолвим путь к Python-скрипту OCR устойчиво к режиму запуска (ts-node из
+ * src vs node из dist). tsc не копирует .py в dist, поэтому `__dirname` после
+ * сборки указывает в dist/.../services, где скрипта нет. Стратегия:
+ *   1) `__dirname/ocr_recipe.py` — работает в dev/ts-node;
+ *   2) `process.cwd()/server/src/services/ocr_recipe.py` — работает из dist
+ *      (репо целиком есть в деплое, запуск всегда из корня).
+ * Первый существующий путь — выигрывает.
+ */
+function resolveOcrScript(): string {
+  const candidates = [
+    join(__dirname, 'ocr_recipe.py'),
+    resolve(process.cwd(), 'server/src/services/ocr_recipe.py'),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  // Возвращаем первый кандидат — execFile отдаст понятную ошибку с путём.
+  return candidates[0];
+}
+
+const OCR_SCRIPT = resolveOcrScript();
 
 export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
   const tmpFile = join(tmpdir(), `klm_recipe_${Date.now()}.pdf`);
