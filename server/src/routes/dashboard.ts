@@ -10,14 +10,17 @@
  *
  * Форма ответа сохранена под текущий фронт client/src/pages/Dashboard.tsx.
  *
- * TODO: добавить requireAuth, когда фронт начнёт слать Bearer-токен.
+ * Доступ только для авторизованных: requireAuth навешан на весь роутер.
  */
 import { Router, Request, Response } from "express";
 import { sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "../db/client";
+import { requireAuth } from "../auth/middleware";
 
 const router = Router();
+
+router.use(requireAuth);
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Типы

@@ -6,13 +6,16 @@
  * Источник данных: новая PostgreSQL-схема (recipe, recipe_item, sku).
  * Форма ответа сохранена под текущий фронт (поля raw_uid, name_from_recipe и т.п.).
  *
- * TODO: добавить requireAuth, когда фронт начнёт слать Bearer-токен.
+ * Доступ только для авторизованных: requireAuth навешан на весь роутер.
  */
 import { Router, Request, Response } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../db/client";
+import { requireAuth } from "../auth/middleware";
 
 const router = Router();
+
+router.use(requireAuth);
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
