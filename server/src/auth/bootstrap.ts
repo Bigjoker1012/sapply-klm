@@ -82,4 +82,15 @@ export async function bootstrap(): Promise<void> {
   if (!IS_PROD && !process.env.SEED_USER_PASSWORD) {
     console.log(`[seed] dev-режим: используется встроенный seed-пароль. Для прода задайте SEED_USER_PASSWORD в env.`);
   }
+
+  // Сид каталога SKU из коммитнутого JSON-снимка. В проде dev-БД из data/ не
+  // коммитится, поэтому без этого приложение поднялось бы с пустым каталогом.
+  // Идемпотентно. Ошибка сида не должна ронять сервер — логируем и продолжаем.
+  try {
+    const { runCatalogSeed } = await import("../scripts/seed-catalog");
+    const r = runCatalogSeed();
+    console.log(`[seed] catalog: sku inserted ${r.inserted}, skipped ${r.skipped} (supplier placeholder id=${r.supplierId})`);
+  } catch (err) {
+    console.warn("[seed] catalog seed пропущен (не критично для старта):", (err as Error).message);
+  }
 }

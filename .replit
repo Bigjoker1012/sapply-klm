@@ -15,6 +15,10 @@ localPort = 8080
 externalPort = 8080
 
 [[ports]]
+localPort = 8090
+externalPort = 3001
+
+[[ports]]
 localPort = 23636
 externalPort = 3000
 
@@ -43,6 +47,6 @@ args = "npx concurrently \"npx ts-node --transpile-only -P server/tsconfig.json 
 waitForPort = 5000
 
 [deployment]
-deploymentTarget = "autoscale"
+deploymentTarget = "vm"
 run = ["npm", "start"]
 build = ["npm", "run", "build"]

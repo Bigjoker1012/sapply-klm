@@ -10,9 +10,28 @@ import Database from "better-sqlite3";
 import * as fs from "fs";
 import * as path from "path";
 
+/**
+ * Резолвим папку миграций устойчиво к режиму запуска (ts-node из src vs node
+ * из dist). tsc не копирует .sql в dist, поэтому `__dirname` после сборки
+ * указывает в dist/.../migrations, где файлов нет. Стратегия:
+ *   1) `__dirname/migrations` — работает в dev/ts-node;
+ *   2) `process.cwd()/server/src/db/migrations` — работает из dist (репо целиком
+ *      есть в деплое, запуск всегда из корня).
+ * Первый существующий путь — выигрывает.
+ */
+function resolveMigrationsDir(): string {
+  const candidates = [
+    path.resolve(__dirname, "migrations"),
+    path.resolve(process.cwd(), "server/src/db/migrations"),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  throw new Error(`Migrations folder not found. Искали: ${candidates.join(", ")}`);
+}
+
 export function runMigrations(dbPath: string): { applied: string[]; skipped: string[] } {
-  const dir = path.resolve(__dirname, "migrations");
-  if (!fs.existsSync(dir)) throw new Error(`Migrations folder not found: ${dir}`);
+  const dir = resolveMigrationsDir();
 
   const sqlite = new Database(dbPath);
   sqlite.pragma("journal_mode = WAL");

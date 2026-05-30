@@ -1,21 +1,23 @@
 /**
  * Сид справочников из JSON-снимка Google Sheets.
- * Запуск: `npm run seed:catalog`
  *
- * Предусловие: миграции уже накатаны (вызывается через bootstrap при старте
- * сервера). Сам сидер миграции не катит — это убирает гонку с параллельным
- * `runMigrations` (раннер `__migrations` без межпроцессной блокировки). Если
- * сидите в чистом окружении — сначала `npm run db:migrate`, потом сид.
+ * Используется двумя путями:
+ *   1) CLI: `npm run seed:catalog` (этот файл как entrypoint).
+ *   2) bootstrap при старте сервера — вызывает `runCatalogSeed()`, чтобы прод
+ *      (где dev-БД из data/ не коммитится) поднялся с наполненным каталогом.
+ *
+ * Предусловие: миграции уже накатаны (bootstrap катит их перед сидом).
+ * Сам сид миграции не катит — это убирает гонку с параллельным `runMigrations`.
  *
  * Идемпотентно: `INSERT OR IGNORE` по уникальным индексам
  *   - `sku_code_unique` (sku.code)
  *   - `supplier_name_unique` (supplier.name, миграция 0003)
- * Повторный запуск ничего не дублирует и не затирает уже отредактированные
+ * Повторный запуск ничего не дублирует и не затирает отредактированные
  * через UI записи.
  *
- * Файл `server/src/db/seed-data/sku-catalog.json` — это снимок листа Syryo
- * (полоцкий КХП), коммитится в репо: сидер должен работать без доступа к
- * Google Sheets, в проде redeploy не должен зависеть от OAuth-токена.
+ * Файл `server/src/db/seed-data/sku-catalog.json` — снимок листа Syryo
+ * (полоцкий КХП), коммитится в репо: сид работает без доступа к Google Sheets,
+ * прод redeploy не зависит от OAuth-токена.
  */
 import fs from "fs";
 import path from "path";
@@ -37,13 +39,14 @@ const PLACEHOLDER_SUPPLIER = "Не указан";
 
 /**
  * Резолвим путь к JSON-снимку устойчиво к режиму запуска (ts-node из src vs
- * node из dist). tsc не копирует JSON в dist, поэтому относительные пути
- * через `__dirname` сломаются после сборки. Стратегия:
- *   1) сначала через `__dirname` (работает в dev/ts-node),
- *   2) затем через `process.cwd()` от корня репо (работает и из dist).
+ * node из dist). tsc не копирует JSON в dist, поэтому `__dirname` после сборки
+ * указывает в dist, где JSON нет. Стратегия:
+ *   1) `__dirname` — работает в dev/ts-node;
+ *   2) `process.cwd()` от корня репо — работает из dist (репо целиком есть
+ *      в деплое, запуск всегда из корня).
  * Первый существующий путь — выигрывает.
  */
-function resolveSeedPath(): string {
+export function resolveSeedPath(): string {
   const candidates = [
     path.resolve(__dirname, "../db/seed-data/sku-catalog.json"),
     path.resolve(process.cwd(), "server/src/db/seed-data/sku-catalog.json"),
@@ -57,18 +60,25 @@ function resolveSeedPath(): string {
   );
 }
 
-async function main(): Promise<void> {
+export interface CatalogSeedResult {
+  inserted: number;
+  skipped: number;
+  supplierId: number;
+}
+
+/** Залить каталог SKU + плейсхолдер-поставщика. Идемпотентно. */
+export function runCatalogSeed(): CatalogSeedResult {
   const seedPath = resolveSeedPath();
   const items: SkuSeed[] = JSON.parse(fs.readFileSync(seedPath, "utf8"));
 
   let inserted = 0;
   let skipped = 0;
-  let supplierId: number;
+  let supplierId = 0;
 
   db.transaction((dbx) => {
-    // Плейсхолдер-поставщик. В Sheets отдельного списка поставщиков нет,
-    // в Inbound пусто. UNIQUE на supplier.name (миграция 0003) гарантирует
-    // отсутствие дублей даже при параллельном сиде.
+    // Плейсхолдер-поставщик. В Sheets отдельного списка поставщиков нет.
+    // UNIQUE на supplier.name (миграция 0003) гарантирует отсутствие дублей
+    // даже при параллельном сиде.
     dbx.run(sql`
       INSERT OR IGNORE INTO supplier (name, active)
       VALUES (${PLACEHOLDER_SUPPLIER}, 1)
@@ -101,14 +111,19 @@ async function main(): Promise<void> {
     }
   });
 
-  console.log(
-    `[seed:catalog] supplier placeholder id=${supplierId!}, sku: inserted ${inserted}, skipped ${skipped} (уже были)`,
-  );
+  return { inserted, skipped, supplierId };
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((err) => {
+// CLI-entrypoint: запускаем только если файл вызван напрямую, а не импортирован.
+if (require.main === module) {
+  try {
+    const r = runCatalogSeed();
+    console.log(
+      `[seed:catalog] supplier placeholder id=${r.supplierId}, sku: inserted ${r.inserted}, skipped ${r.skipped} (уже были)`,
+    );
+    process.exit(0);
+  } catch (err) {
     console.error("[seed:catalog] ошибка:", err);
     process.exit(1);
-  });
+  }
+}
