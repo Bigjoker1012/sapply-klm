@@ -6,3 +6,9 @@ id = "RxcB5-8MypMgTRavWYvLH"
 uri = "file://attached_assets/recipe_preview.png"
 type = "image"
 title = "Рецепт технолога (Антистресс) — исходный вид"
+
+[[outputs]]
+id = "ilGkSaknji8VilpsgqIcV"
+uri = "file://docs/Инструкция Supply KLM.docx"
+type = "word_document"
+title = "Инструкция Supply KLM — по ролям (Word)"
