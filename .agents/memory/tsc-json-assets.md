@@ -15,6 +15,11 @@ description: Скрипты, читающие JSON из src через __dirname
 
 **Why:** ts-node прячет эту проблему — всё работает локально, ломается только в проде после `npm run build && node dist/...`. Подтверждено трижды: JSON-снимок каталога (`seed-catalog.ts`), папка SQL-миграций (`migrate.ts`, падал с `Migrations folder not found`) и Python-скрипт OCR (`pdfParser.ts` зовёт `python3 dist/.../ocr_recipe.py` — `.py` тоже не копируется). Любой не-`.ts`/`.js` файл рядом с кодом — потенциальная мина.
 
-Доп. грабли с Python-скриптами: их pip-зависимости (тут PyMuPDF/`fitz`) живут в `.pythonlibs` (UV_PROJECT_ENVIRONMENT), который в `.gitignore`. Обязательно декларировать в `pyproject.toml`, иначе зависимость «скрытая» и может не доехать до прод-образа. Системные бинарники (tesseract+`rus`, mupdf/pdftoppm) брать через `replit.nix` — он детерминирован для dev и деплоя.
+Доп. грабли с Python-скриптами и зависимостями в ЭТОМ репле:
+- `.pythonlibs` — это `PYTHONUSERBASE` (пакеты ставятся через `pip --user`), а НЕ uv-venv: в нём НЕТ `pyvenv.cfg`. PyMuPDF/`fitz` уже лежит там и попадает в снимок VM-деплоя (gitignore на деплой не влияет).
+- НЕ добавлять pip-зависимости в `pyproject.toml` `dependencies`. Деплой на этапе Build гоняет `uv sync`; при пустом `dependencies=[]` это no-op и проходит, но как только появляется зависимость — uv пытается поставить её в read-only nix store python (`UV_PYTHON_PREFERENCE=only-system`, валидного venv нет) и падает с `Permission denied (os error 13)`, ломая публикацию. Это уже ловилось: добавил `pymupdf>=1.27` → Build упал → откатил обратно в `dependencies=[]`.
+- Системные бинарники (tesseract+`rus`, mupdf/pdftoppm) брать через `replit.nix` — он детерминирован для dev и деплоя.
+
+**Why:** платформенный uv в этом репле не видит `.pythonlibs` как управляемое окружение, поэтому любая декларация зависимости приводит к попытке записи в неизменяемый nix store. Управление Python-пакетами тут — через pip-user, а доставка в прод — через снимок workspace, а не через `pyproject`/`uv sync`.
 
 **How to apply:** при создании нового CLI-скрипта в `server/src/scripts/`, если он читает что-то относительно себя — сразу резолвить через массив кандидатов; не оставлять «потом починим».
