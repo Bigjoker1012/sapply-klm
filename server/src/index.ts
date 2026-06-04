@@ -21,6 +21,7 @@ import recipeRoutes from "./routes/recipes";
 import dashboardRoutes from "./routes/dashboard";
 import rawMaterialsRoutes from "./routes/rawMaterials";
 import documentsRoutes from "./routes/documents";
+import planningRoutes from "./routes/planning";
 
 app.use("/api/auth", authRoutes);
 app.use("/api/upload", uploadRoutes);
@@ -31,6 +32,7 @@ app.use("/api/recipes", recipeRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/raw-materials", rawMaterialsRoutes);
 app.use("/api/documents", documentsRoutes);
+app.use("/api/planning", planningRoutes);
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), storage: "PostgreSQL" });

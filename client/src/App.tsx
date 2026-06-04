@@ -3,8 +3,9 @@ import Dashboard from './pages/Dashboard';
 import Excluded from './pages/Excluded';
 import Synonyms from './pages/Synonyms';
 import Analogs from './pages/Analogs';
+import Planning from './pages/Planning';
 
-type Tab = 'home' | 'excluded' | 'synonyms' | 'analogs';
+type Tab = 'home' | 'planning' | 'excluded' | 'synonyms' | 'analogs';
 
 function App() {
   const [tab, setTab] = useState<Tab>('home');
@@ -25,6 +26,9 @@ function App() {
         <button className={tabCls(tab === 'home')} onClick={() => setTab('home')}>
           Главная
         </button>
+        <button className={tabCls(tab === 'planning')} onClick={() => setTab('planning')}>
+          Планирование закупок
+        </button>
         <button className={tabCls(tab === 'synonyms')} onClick={() => setTab('synonyms')}>
           База синонимов
         </button>
@@ -36,7 +40,8 @@ function App() {
         </button>
       </nav>
 
-      {tab === 'home' && <Dashboard />}
+      {tab === 'home' && <Dashboard onOpenPlanning={() => setTab('planning')} />}
+      {tab === 'planning' && <Planning onBack={goHome} />}
       {tab === 'synonyms' && <Synonyms onBack={goHome} />}
       {tab === 'analogs' && <Analogs onBack={goHome} />}
       {tab === 'excluded' && <Excluded onBack={goHome} />}

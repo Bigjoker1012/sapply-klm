@@ -3,4 +3,5 @@
 - [КД 1С «Ведомость по партиям»](kd-1c-vedomost-format.md) — два формата (qty в col H/7 или G/6); искать колонку «Конечный остаток» динамически, не хардкодить; отбрасывать строки серий и документов движения.
 - [Парсинг рецепта PDF](recipe-pdf-text-layer.md) — цифровые PDF, парсить текстовым слоем (pdf-parse), OCR только фолбэк; чисто-OCR падал MuPDF «No common ancestor».
 - [Свободный ввод сырья](material-picker-resolve.md) — авто-резолв названия в raw_uid только по ТОЧНОМУ совпадению каталога, не по includes; иначе молча привяжется не то сырьё.
+- [drizzle-kit push требует TTY](drizzle-push-tty.md) — push падает в агенте (нет TTY); применять схему прямым DDL через executeSql, DDL брать из вывода push.
 - [Lost work recovery](lost-work-recovery.md) — если main сброшен на origin/main и фичи пропали из исходников, работа в gitsafe-backup/main + reflog; восстанавливать `git show <tip>:path > path` (деструктивный git заблокирован).
