@@ -1,5 +1,6 @@
 - [Aliases vs catalog codes](aliases-vs-catalog-codes.md) — synonym codes (RAW030) ≠ catalog codes (RAW_030); never normalize by underscore, only exact match; trust synonym TEXTS not codes.
 - [Sheets vs Postgres split](sheets-vs-postgres-split.md) — recognition/upload flow = Google Sheets; dashboard decisions = Postgres; read unmatched+catalog from Sheets endpoints, not /dashboard/all.
+- [Stock summation = latest snapshot](stock-summation-snapshots.md) — остатки читать через sumLatestSnapshot (макс. дата + сумма всех строк по uid), не last-write-wins; иначе недосчёт строк и фантомы из старых снимков.
 - [КД 1С «Ведомость по партиям»](kd-1c-vedomost-format.md) — два формата (qty в col H/7 или G/6); искать колонку «Конечный остаток» динамически, не хардкодить; отбрасывать строки серий и документов движения.
 - [Парсинг рецепта PDF](recipe-pdf-text-layer.md) — цифровые PDF, парсить текстовым слоем (pdf-parse), OCR только фолбэк; чисто-OCR падал MuPDF «No common ancestor».
 - [Свободный ввод сырья](material-picker-resolve.md) — авто-резолв названия в raw_uid только по ТОЧНОМУ совпадению каталога, не по includes; иначе молча привяжется не то сырьё.

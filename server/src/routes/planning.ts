@@ -65,11 +65,15 @@ router.get("/", async (_req: Request, res: Response) => {
         const s = settings.get(m.raw_uid);
         const manual_input = s?.manual_input ?? false;
         const manual_avg_usage = s?.manual_avg_usage ?? null;
-        const qty_today =
+        // Остаток на руках за вычетом потребности по рецептам. Не может быть
+        // отрицательным: если рецепты требуют больше, чем есть — на руках 0,
+        // а дефицит закрывается закупкой (отдельный расчёт), не «минусом».
+        const qty_raw =
           (plant.get(m.raw_uid) || 0) +
           (lip.get(m.raw_uid) || 0) +
           (inbound.get(m.raw_uid) || 0) -
           (need.get(m.raw_uid) || 0);
+        const qty_today = Math.max(0, Math.round((qty_raw + Number.EPSILON) * 100) / 100);
         return {
           raw_uid: m.raw_uid,
           name: m.full_name,

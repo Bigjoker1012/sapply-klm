@@ -613,13 +613,39 @@ export async function writePlantStock(rows: { raw_uid: string; name_from_source:
   if (newRows.length) await appendRows("PlantStock", newRows);
 }
 
-export async function getLatestPlantStock(): Promise<Map<string, number>> {
-  const rows = await readRange("PlantStock", "A2:G5000");
-  const map = new Map<string, number>();
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+/**
+ * Суммирует остатки ТОЛЬКО по последнему снимку склада.
+ *
+ * Каждая загрузка файла = полный снимок остатков склада на эту дату (старые
+ * даты остаются в листе как история). Поэтому берём максимальную дату-снимок
+ * и суммируем количество ПО ВСЕМ строкам каждого raw_uid в этом снимке
+ * (одна позиция может идти несколькими строками — разные партии/проценты).
+ * Позиция, которой нет в последнем снимке, считается отсутствующей (0), а не
+ * берётся из устаревшего снимка — иначе «всплывали» давно списанные остатки.
+ */
+function sumLatestSnapshot(rows: any[][], qtyOf: (r: any[]) => number): Map<string, number> {
+  let maxDate = "";
   for (const r of rows) {
-    if (r[1]) map.set(String(r[1]), parseNum(r[3]));
+    const d = String(r[0] || "").trim();
+    if (ISO_DATE.test(d) && d > maxDate) maxDate = d;
+  }
+  const map = new Map<string, number>();
+  if (!maxDate) return map;
+  for (const r of rows) {
+    if (String(r[0] || "").trim() !== maxDate) continue;
+    if (!r[1]) continue;
+    const uid = String(r[1]);
+    map.set(uid, round2((map.get(uid) || 0) + qtyOf(r)));
   }
   return map;
+}
+
+export async function getLatestPlantStock(): Promise<Map<string, number>> {
+  const rows = await readRange("PlantStock", "A2:G5000");
+  return sumLatestSnapshot(rows, r => parseNum(r[3]));
 }
 
 // ─── LIP STOCK ──────────────────────────────────────────────────────────────
@@ -630,11 +656,36 @@ export async function writeLipStock(
 ): Promise<void> {
   const today = new Date().toISOString().split("T")[0];
   const existing = await readRange("LipStock", "A2:I5000");
-  const keepRows = existing.filter(r => !(r[0] === today && r[1] === raw_uid));
-  await clearRange("LipStock", "A2:I5000");
-  if (keepRows.length) await writeRange("LipStock", `A2:I${keepRows.length + 1}`, keepRows);
   const free = free_qty >= 0 ? free_qty : Math.max(0, qty_on_hand - reserved_qty);
-  await appendRows("LipStock", [[today, raw_uid, name_from_source, qty_on_hand, reserved_qty, free, "кг", source, "FALSE"]]);
+  const updatedRow = [today, raw_uid, name_from_source, qty_on_hand, reserved_qty, free, "кг", source, "FALSE"];
+
+  // Ручное обновление ОДНОЙ позиции. Чтение остатков берёт только последний
+  // снимок (макс. дату), поэтому переносим текущий снимок в сегодня целиком —
+  // иначе все прочие позиции «обнулятся». Переносим лишь то, что есть в
+  // последнем снимке (списанные/отсутствующие позиции не воскрешаем).
+  let maxDate = "";
+  for (const r of existing) {
+    const d = String(r[0] || "").trim();
+    if (ISO_DATE.test(d) && d > maxDate) maxDate = d;
+  }
+  const snapshot: any[][] = [];
+  for (const r of existing) {
+    if (String(r[0] || "").trim() !== maxDate) continue;
+    const uid = String(r[1] || "");
+    if (!uid || uid === raw_uid) continue;
+    snapshot.push([today, uid, r[2], r[3], r[4], r[5], r[6] || "кг", r[7] || "", "FALSE"]);
+  }
+  snapshot.push(updatedRow);
+
+  // Историю (старые даты) сохраняем, сверху кладём полный снимок на сегодня.
+  const history = existing.filter(r => {
+    const d = String(r[0] || "").trim();
+    return ISO_DATE.test(d) && d !== today;
+  });
+  const allRows = [...history, ...snapshot];
+  await clearRange("LipStock", "A2:I5000");
+  if (allRows.length) await writeRange("LipStock", `A2:I${allRows.length + 1}`, allRows);
+  invalidateCache();
 }
 
 /**
@@ -646,9 +697,11 @@ export async function writeLipStockBatch(
 ): Promise<void> {
   if (!rows.length) return;
   const today = new Date().toISOString().split("T")[0];
-  const uidsToReplace = new Set(rows.map(r => r.raw_uid));
+  // Загрузка файла = полный снимок склада: заменяем ВСЕ сегодняшние строки
+  // (а не только пришедшие uid), иначе повторная загрузка с меньшим набором
+  // позиций оставит «висеть» устаревшие строки. Старые даты — история.
   const existing = await readRange("LipStock", "A2:I5000");
-  const keepRows = existing.filter(r => !(r[0] === today && uidsToReplace.has(String(r[1]))));
+  const keepRows = existing.filter(r => r[0] !== today);
   const newRows = rows.map(r => [today, r.raw_uid, r.name_from_source, r.qty, 0, r.qty, "кг", r.source, "FALSE"]);
   const allRows = [...keepRows, ...newRows];
   await clearRange("LipStock", "A2:I5000");
@@ -750,14 +803,10 @@ export async function deleteAnalog(id: string): Promise<void> {
 
 export async function getLatestLipStock(): Promise<Map<string, number>> {
   const rows = await readRange("LipStock", "A2:I5000");
-  const map = new Map<string, number>();
-  for (const r of rows) {
-    if (r[1]) {
-      const free = parseNum(r[5]) > 0 ? parseNum(r[5]) : Math.max(0, parseNum(r[3]) - parseNum(r[4]));
-      map.set(String(r[1]), free);
-    }
-  }
-  return map;
+  return sumLatestSnapshot(rows, r => {
+    const free = parseNum(r[5]);
+    return free > 0 ? free : Math.max(0, parseNum(r[3]) - parseNum(r[4]));
+  });
 }
 
 export async function getLipStockList(): Promise<any[]> {

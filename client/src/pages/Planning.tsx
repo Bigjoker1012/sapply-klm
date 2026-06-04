@@ -18,7 +18,7 @@ interface PlanRow {
 /** Варианты коэффициента закупки: 0,1 … 1,0 */
 const COEF_OPTIONS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
 
-const nf = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
+const nf = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const fmt = (n: number | null | undefined) =>
   n === null || n === undefined || Number.isNaN(n) ? '—' : nf.format(n);
 const fmtCoef = (n: number) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
