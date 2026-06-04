@@ -11,6 +11,12 @@ import { Router, Request, Response } from "express";
 import { sql, SQL } from "drizzle-orm";
 import { db } from "../db/client";
 import { requireAuth } from "../auth/middleware";
+import {
+  getAllRawMaterials,
+  getLatestPlantStock,
+  getLatestLipStock,
+  getInboundTotals,
+} from "../services/sheetsService";
 
 const router = Router();
 router.use(requireAuth);
@@ -29,51 +35,49 @@ interface PlanningRow {
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const rows = (await db.execute(sql`
-      SELECT
-        s.code AS raw_uid,
-        s.name AS name,
-        s.unit AS unit,
-        COALESCE((
-          SELECT SUM(b.current_qty_kg) FROM batch b
-          JOIN warehouse w ON w.id = b.warehouse_id
-          WHERE b.sku_id = s.id AND b.status = 'active' AND w.code = 'POLOTSK'
-        ), 0)
-        + COALESCE((
-          SELECT SUM(b.current_qty_kg) FROM batch b
-          JOIN warehouse w ON w.id = b.warehouse_id
-          WHERE b.sku_id = s.id AND b.status = 'active' AND w.code = 'LIPKOV'
-        ), 0)
-        + COALESCE((
-          SELECT SUM(it.qty_kg) FROM in_transit it
-          WHERE it.sku_id = s.id AND it.status IN ('at_supplier','in_transit','customs')
-        ), 0)                                     AS qty_today,
-        p.coefficient                             AS coefficient,
-        p.manual_input                            AS manual_input,
-        p.manual_avg_usage                        AS manual_avg_usage
-      FROM sku s
-      LEFT JOIN purchase_plan_setting p ON p.sku_code = s.code
-      WHERE s.active = true
-      ORDER BY s.name
-    `)).rows as Array<{
-      raw_uid: string; name: string; unit: string; qty_today: number | string;
-      coefficient: number | null; manual_input: boolean | null; manual_avg_usage: number | null;
-    }>;
+    // Остатки и каталог берём из Google Sheets — это фактический источник
+    // введённых пользователем данных (Полоцк + Липковская + в пути).
+    // Настройки планирования (коэффициент / ручной ввод) — из Postgres.
+    const [catalog, plant, lip, inbound, settingRes] = await Promise.all([
+      getAllRawMaterials(),
+      getLatestPlantStock(),
+      getLatestLipStock(),
+      getInboundTotals(),
+      db.execute(sql`SELECT sku_code, coefficient, manual_input, manual_avg_usage FROM purchase_plan_setting`),
+    ]);
 
-    const result: PlanningRow[] = rows.map(r => {
-      const manual_input = r.manual_input === true;
-      const manual_avg_usage = r.manual_avg_usage ?? null;
-      return {
-        raw_uid: r.raw_uid,
-        name: r.name,
-        unit: r.unit,
-        qty_today: Number(r.qty_today) || 0,
-        avg_monthly_usage: manual_input ? manual_avg_usage : null,
+    const settings = new Map<string, { coefficient: number; manual_input: boolean; manual_avg_usage: number | null }>();
+    for (const r of settingRes.rows as Array<{ sku_code: string; coefficient: number | null; manual_input: boolean | null; manual_avg_usage: number | null }>) {
+      settings.set(String(r.sku_code), {
         coefficient: r.coefficient ?? 1,
-        manual_input,
-        manual_avg_usage,
-      };
-    });
+        manual_input: r.manual_input === true,
+        manual_avg_usage: r.manual_avg_usage ?? null,
+      });
+    }
+
+    const result: PlanningRow[] = catalog
+      .filter(m => m.active)
+      .map(m => {
+        const s = settings.get(m.raw_uid);
+        const manual_input = s?.manual_input ?? false;
+        const manual_avg_usage = s?.manual_avg_usage ?? null;
+        const qty_today =
+          (plant.get(m.raw_uid) || 0) +
+          (lip.get(m.raw_uid) || 0) +
+          (inbound.get(m.raw_uid) || 0);
+        return {
+          raw_uid: m.raw_uid,
+          name: m.full_name,
+          unit: m.unit,
+          qty_today,
+          avg_monthly_usage: manual_input ? manual_avg_usage : null,
+          coefficient: s?.coefficient ?? 1,
+          manual_input,
+          manual_avg_usage,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "ru"));
+
     res.json(result);
   } catch (err: any) {
     console.error("[planning/get]", err);
