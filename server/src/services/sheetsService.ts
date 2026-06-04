@@ -830,7 +830,12 @@ export async function addInbound(
 
 export async function getInboundList(): Promise<any[]> {
   const rows = await readRange("Inbound", "A2:H5000");
-  return rows.filter(r => r[0] && String(r[6]).toLowerCase() !== "получено").map(r => ({
+  return rows.filter(r => {
+    if (!r[0]) return false;
+    const status = String(r[6] || "").toLowerCase();
+    // Прячем уже полученные и помеченные удалёнными (delete = мягкое, статус "удалено").
+    return status !== "получено" && status !== "удалено";
+  }).map(r => ({
     id: r[0], raw_uid: r[1], raw_name: r[2], qty: parseNum(r[3]),
     eta: r[4], destination: r[5], status: r[6], document: r[7],
   }));

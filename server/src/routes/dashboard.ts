@@ -23,6 +23,7 @@ import {
   getLatestPlantStock,
   getLatestLipStock,
   getInboundTotals,
+  getInboundList,
   getNeedTotals,
 } from "../services/sheetsService";
 
@@ -153,33 +154,21 @@ async function loadRawMaterials(): Promise<RawMaterialDto[]> {
   }));
 }
 
-/** Список «в пути» — для нижнего блока на дашборде. */
+/**
+ * Список «в пути» — для блока на дашборде. Источник — лист Inbound в Google
+ * Sheets (как и расчёты getInboundTotals и ручной ввод через /api/in-transit),
+ * а НЕ пустая Postgres-таблица in_transit. getInboundList уже прячет строки со
+ * статусом «получено»/«удалено», поэтому удалённые позиции исчезают из списка.
+ */
 async function loadInbound(): Promise<InboundDto[]> {
-  const rows = (await db.execute(sql`
-    SELECT
-      it.id          AS id,
-      s.code         AS raw_uid,
-      s.name         AS raw_name,
-      it.qty_kg      AS qty,
-      it.eta_date    AS eta,
-      w.name         AS destination,
-      it.status      AS status
-    FROM in_transit it
-    JOIN sku s ON s.id = it.sku_id
-    JOIN warehouse w ON w.id = it.warehouse_id
-    WHERE it.status IN ('at_supplier','in_transit','customs')
-    ORDER BY COALESCE(it.eta_date, '9999-12-31'), it.id
-  `)).rows as Array<{
-    id: number; raw_uid: string; raw_name: string; qty: number;
-    eta: string | null; destination: string; status: string;
-  }>;
-  return rows.map(r => ({
+  const list = await getInboundList();
+  return list.map(r => ({
     id: String(r.id),
     raw_uid: r.raw_uid,
     raw_name: r.raw_name,
-    qty: r.qty,
+    qty: Math.round((r.qty + Number.EPSILON) * 100) / 100,
     eta: r.eta ?? "",
-    destination: r.destination,
+    destination: r.destination ?? "",
     status: r.status,
   }));
 }
@@ -228,10 +217,9 @@ async function loadStatus() {
     WHERE w.code = 'POLOTSK'
   `)).rows[0] as { last_update: string | null } | undefined;
 
-  const activeInboundRow = (await db.execute(sql`
-    SELECT COUNT(*) AS c FROM in_transit
-    WHERE status IN ('at_supplier','in_transit','customs')
-  `)).rows[0] as { c: number | string };
+  // Счётчик «в пути» берём из того же источника, что и список (Sheets Inbound),
+  // иначе нижняя панель показывала бы 0 при непустом списке выше.
+  const inboundList = await getInboundList();
 
   const unresolvedRow = (await db.execute(sql`
     SELECT COUNT(*) AS c FROM upload_row ur
@@ -241,7 +229,7 @@ async function loadStatus() {
 
   return {
     plant_last_update: lastPlantRow?.last_update ?? null,
-    active_inbound_count: Number(activeInboundRow.c),
+    active_inbound_count: inboundList.length,
     unresolved_review_count: Number(unresolvedRow.c),
   };
 }
