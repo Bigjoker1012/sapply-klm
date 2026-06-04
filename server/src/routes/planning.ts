@@ -8,9 +8,8 @@
  * только ручной ввод; иначе поле пустое.
  */
 import { Router, Request, Response } from "express";
-import { sql } from "drizzle-orm";
+import { sql, SQL } from "drizzle-orm";
 import { db } from "../db/client";
-import { purchasePlanSetting } from "../db/schema";
 import { requireAuth } from "../auth/middleware";
 
 const router = Router();
@@ -87,29 +86,40 @@ router.patch("/:raw_uid", async (req: Request, res: Response) => {
     const skuCode = req.params.raw_uid;
     const body = req.body ?? {};
 
-    const insert: Record<string, any> = { skuCode };
-    const set: Record<string, any> = { updatedAt: new Date().toISOString() };
+    const fields: { coefficient?: number; manualInput?: boolean; manualAvgUsage?: number | null } = {};
 
     if (body.coefficient !== undefined) {
       const c = Math.min(1, Math.max(0.1, Number(body.coefficient)));
       if (!Number.isFinite(c)) return res.status(400).json({ error: "coefficient некорректен" });
-      insert.coefficient = c; set.coefficient = c;
+      fields.coefficient = c;
     }
     if (body.manual_input !== undefined) {
-      const mi = !!body.manual_input;
-      insert.manualInput = mi; set.manualInput = mi;
+      fields.manualInput = !!body.manual_input;
     }
     if (body.manual_avg_usage !== undefined) {
       const raw = body.manual_avg_usage;
       const v = raw === null || raw === "" ? null : Math.max(0, Number(raw));
       if (v !== null && !Number.isFinite(v)) return res.status(400).json({ error: "manual_avg_usage некорректен" });
-      insert.manualAvgUsage = v; set.manualAvgUsage = v;
+      fields.manualAvgUsage = v;
     }
 
-    await db.insert(purchasePlanSetting).values(insert).onConflictDoUpdate({
-      target: purchasePlanSetting.skuCode,
-      set,
-    });
+    // Гарантируем строку с дефолтами, затем точечно обновляем переданные поля.
+    await db.execute(sql`
+      INSERT INTO purchase_plan_setting (sku_code) VALUES (${skuCode})
+      ON CONFLICT (sku_code) DO NOTHING
+    `);
+
+    const sets: SQL[] = [
+      sql`updated_at = to_char((now() AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+    ];
+    if (fields.coefficient !== undefined) sets.push(sql`coefficient = ${fields.coefficient}`);
+    if (fields.manualInput !== undefined) sets.push(sql`manual_input = ${fields.manualInput}`);
+    if (fields.manualAvgUsage !== undefined) sets.push(sql`manual_avg_usage = ${fields.manualAvgUsage}`);
+
+    await db.execute(sql`
+      UPDATE purchase_plan_setting SET ${sql.join(sets, sql`, `)}
+      WHERE sku_code = ${skuCode}
+    `);
     res.json({ ok: true });
   } catch (err: any) {
     console.error("[planning/patch]", err);
