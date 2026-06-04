@@ -5,8 +5,9 @@
  *   GET /api/dashboard/status     — короткий статус-блок
  *   GET /api/dashboard/export     — выгрузка решений в XLSX
  *
- * Источник данных: новая PostgreSQL-схема (см. server/src/db/schema.ts).
- * Раньше — Google Sheets через sheetsService.ts (этот файл уже не импортируем).
+ * Источник данных по остаткам и решениям о закупках — Google Sheets (тот же,
+ * что и страница «Планирование закупок»): Полоцк + Липковская + в пути − рецепты.
+ * Справочник, очередь распознавания и архив документов берём из PostgreSQL.
  *
  * Форма ответа сохранена под текущий фронт client/src/pages/Dashboard.tsx.
  *
@@ -17,6 +18,13 @@ import { sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "../db/client";
 import { requireAuth } from "../auth/middleware";
+import {
+  getAllRawMaterials,
+  getLatestPlantStock,
+  getLatestLipStock,
+  getInboundTotals,
+  getNeedTotals,
+} from "../services/sheetsService";
 
 const router = Router();
 
@@ -83,49 +91,36 @@ interface UnmatchedDto {
 // Запросы к БД
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Активные SKU + остатки по двум складам + ETA-приход + плановая потребность. */
+/**
+ * Активные позиции каталога + остатки (Полоцк/Липковская) + в пути + плановая
+ * потребность по рецептам. Источник — Google Sheets, тот же, что у страницы
+ * «Планирование закупок», чтобы цифры на «Главной» совпадали с реальностью.
+ */
 async function loadAggregates() {
-  /**
-   * Один большой read-only join: каждая активная SKU + SUM остатков по
-   * POLOTSK/LIPKOV (только активные партии) + сумма in_transit (не received)
-   * + плановая потребность (production_plan planned/in_progress * recipe_item).
-   */
-  const rows = (await db.execute(sql`
-    SELECT
-      s.id                                      AS sku_id,
-      s.code                                    AS raw_uid,
-      s.name                                    AS name,
-      s.unit                                    AS unit,
-      COALESCE(s.reorder_point_kg, 0)           AS threshold_qty,
-      COALESCE(s.min_stock_kg, 0)               AS min_stock_kg,
-      COALESCE((
-        SELECT SUM(b.current_qty_kg) FROM batch b
-        JOIN warehouse w ON w.id = b.warehouse_id
-        WHERE b.sku_id = s.id AND b.status = 'active' AND w.code = 'POLOTSK'
-      ), 0)                                     AS plant_qty,
-      COALESCE((
-        SELECT SUM(b.current_qty_kg) FROM batch b
-        JOIN warehouse w ON w.id = b.warehouse_id
-        WHERE b.sku_id = s.id AND b.status = 'active' AND w.code = 'LIPKOV'
-      ), 0)                                     AS lip_qty,
-      COALESCE((
-        SELECT SUM(it.qty_kg) FROM in_transit it
-        WHERE it.sku_id = s.id AND it.status IN ('at_supplier','in_transit','customs')
-      ), 0)                                     AS inbound_qty,
-      COALESCE((
-        SELECT SUM(pp.qty_t * ri.dose_kg_per_t) FROM production_plan pp
-        JOIN recipe_item ri ON ri.recipe_id = pp.recipe_id
-        WHERE ri.sku_id = s.id AND pp.status IN ('planned','in_progress')
-      ), 0)                                     AS planned_need
-    FROM sku s
-    WHERE s.active = true
-    ORDER BY s.name
-  `)).rows as Array<{
-    sku_id: number; raw_uid: string; name: string; unit: string;
-    threshold_qty: number; min_stock_kg: number;
-    plant_qty: number; lip_qty: number; inbound_qty: number; planned_need: number;
-  }>;
-  return rows;
+  const [catalog, plant, lip, inbound, need] = await Promise.all([
+    getAllRawMaterials(),
+    getLatestPlantStock(),
+    getLatestLipStock(),
+    getInboundTotals(),
+    getNeedTotals(),
+  ]);
+  const round2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
+  return catalog
+    .filter(m => m.active)
+    .map(m => ({
+      sku_id: 0,
+      raw_uid: m.raw_uid,
+      name: m.full_name,
+      unit: m.unit,
+      // Порогов закупки в варианте «простой светофор» нет — статус считаем
+      // по соотношению остатка и потребности рецептов (см. computeDecisions).
+      threshold_qty: 0,
+      min_stock_kg: 0,
+      plant_qty: round2(plant.get(m.raw_uid) || 0),
+      lip_qty: round2(lip.get(m.raw_uid) || 0),
+      inbound_qty: round2(inbound.get(m.raw_uid) || 0),
+      planned_need: round2(need.get(m.raw_uid) || 0),
+    }));
 }
 
 /** Полный список сырья для блока «справочник». */
@@ -266,32 +261,41 @@ async function computeDecisions(): Promise<Decision[]> {
   const aggregates = await loadAggregates();
 
   const decisions: Decision[] = aggregates.map(a => {
-    const threshold = a.threshold_qty;            // точка перезаказа (кг)
-    const minStock = a.min_stock_kg;              // страховой запас (кг)
-    const available_total = a.plant_qty + a.lip_qty + a.inbound_qty;
-    const expected_after_plan = available_total - a.planned_need;
-    const deficit_to_threshold = Math.max(0, threshold - expected_after_plan);
-    const cover_by_transfer = Math.min(a.lip_qty, deficit_to_threshold);
-    const cover_by_purchase = Math.max(0, deficit_to_threshold - cover_by_transfer);
+    // Простой светофор (без ручных порогов): сравниваем фактический остаток на
+    // руках с потребностью рецептов.
+    const on_hand = a.plant_qty + a.lip_qty + a.inbound_qty;   // остаток + в пути
+    const need = a.planned_need;                               // потребность рецептов
+    const available_total = on_hand;
+    const expected_after_plan = on_hand - need;                // может быть < 0 (для таблицы)
+
+    // Потребность закрываем сначала запасом самого Полоцка (+ его приход),
+    // затем перебросом с Липковской, и лишь остаток — закупкой. Липковская
+    // уже входит в on_hand, поэтому закупка = общий дефицит (need − on_hand),
+    // а переброска покрывает только нехватку Полоцка (без двойного учёта).
+    const polotsk_side = a.plant_qty + a.inbound_qty;
+    const polotsk_deficit = Math.max(0, need - polotsk_side);
+    const cover_by_transfer = Math.min(a.lip_qty, polotsk_deficit);
+    const cover_by_purchase = Math.max(0, need - on_hand);
 
     /**
-     * Статус:
-     *   < 0                — Срочно к закупке (уйдём в минус)
-     *   < minStock         — Срочно к закупке (пробили страховой)
-     *   < threshold        — К закупке (ниже точки перезаказа)
-     *   < threshold * 1.2  — На контроле (близко к перезаказу)
-     *   иначе              — Норма
+     * Статус (вариант «простой светофор»):
+     *   🔴 Срочно к закупке — остатка нет вообще (on_hand = 0)
+     *   🟡 К закупке        — остаток есть, но меньше потребности рецептов
+     *   🔵 На контроле      — хватает на план, но впритык (запас < 20%)
+     *   🟢 Норма            — остальное (хватает с запасом или рецепты не требуют)
      */
-    let status: Decision["status"] = "Норма";
-    if (expected_after_plan < 0 || expected_after_plan < minStock) status = "Срочно к закупке";
-    else if (expected_after_plan < threshold) status = "К закупке";
-    else if (threshold > 0 && expected_after_plan < threshold * 1.2) status = "На контроле";
+    const EPS = 0.001;
+    let status: Decision["status"];
+    if (on_hand <= EPS) status = "Срочно к закупке";
+    else if (need > EPS && on_hand < need - EPS) status = "К закупке";
+    else if (need > EPS && on_hand < need * 1.2) status = "На контроле";
+    else status = "Норма";
 
     return {
       raw_uid: a.raw_uid,
       name: a.name,
       avg_monthly_usage: 0, // см. TODO в loadRawMaterials
-      threshold_qty: threshold,
+      threshold_qty: a.threshold_qty,
       plant_qty: a.plant_qty,
       lip_qty: a.lip_qty,
       inbound_qty: a.inbound_qty,
