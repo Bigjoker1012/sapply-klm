@@ -542,6 +542,38 @@ export const eventLog = pgTable("event_log", {
 }));
 
 // ============================================================================
+// 5b. Архив прикреплённых документов
+// ============================================================================
+
+/** Тип прикрепляемого документа (соответствует эндпоинтам загрузки) */
+export const documentType = ["polotsk", "lipkovskaya", "kd", "recipe"] as const;
+export type DocumentType = typeof documentType[number];
+
+/**
+ * Архив оригиналов прикреплённых файлов (Excel/PDF остатков, КД, рецептов).
+ * Файл хранится как base64 в fileData. «Действующий документ» каждого типа —
+ * последний по uploadedAt; это время = момент закрепления, единое для всех
+ * пользователей и сохраняется после перезагрузки страницы.
+ */
+export const documentArchive = pgTable("document_archive", {
+  id: serial("id").primaryKey(),
+  /** Тип документа (polotsk / lipkovskaya / kd / recipe) */
+  docType: text("doc_type", { enum: documentType }).notNull(),
+  /** Имя файла как при загрузке */
+  fileName: text("file_name").notNull(),
+  /** MIME-тип (application/pdf, application/vnd.openxmlformats-...) */
+  mimeType: text("mime_type").notNull(),
+  /** Содержимое файла в base64 */
+  fileData: text("file_data").notNull(),
+  /** Размер файла в байтах */
+  sizeBytes: integer("size_bytes").notNull(),
+  /** Момент закрепления (ISO UTC), единый для всех */
+  uploadedAt: text("uploaded_at").notNull().default(nowIso),
+}, (t) => ({
+  byTypeDate: index("document_archive_type_date_idx").on(t.docType, t.uploadedAt),
+}));
+
+// ============================================================================
 // 6. Пользователи и сессии
 // ============================================================================
 

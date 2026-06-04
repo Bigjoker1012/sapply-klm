@@ -167,6 +167,186 @@ export async function getAllRawMaterials(): Promise<RawMaterial[]> {
     }));
 }
 
+/**
+ * Удаление позиции каталога (Syryo) по uid. Очищает ячейки строки A:H —
+ * getAllRawMaterials отфильтрует пустую строку (фильтр r[0] && r[1]).
+ * Возвращает true, если позиция найдена и удалена.
+ */
+export async function deleteRawMaterial(uid: string): Promise<boolean> {
+  const rows = await readRange("Syryo", "A2:H1000");
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === uid) {
+      await clearRange("Syryo", `A${i + 2}:H${i + 2}`);
+      return true;
+    }
+  }
+  return false;
+}
+
+export interface ParsedAlias {
+  /** col A исходной строки (AL_xxx или код) — используется DELETE-роутом. */
+  id: string;
+  /** Исходный код привязки (col A для старого формата, col B для AL_). */
+  code: string;
+  /**
+   * Канонический код каталога. Заполняется ТОЛЬКО когда `code` точно совпадает
+   * с кодом позиции каталога; иначе `null`. Никогда не содержит неканонический
+   * (неразрешённый) код — потреблять для привязки можно без доп. проверок.
+   */
+  canonical_raw_uid: string | null;
+  /** `true` ⇔ `canonical_raw_uid !== null` (удобный флаг для фильтрации). */
+  resolved: boolean;
+  /** Текст синонима / торгового названия. */
+  synonym: string;
+  source: string;
+}
+
+/**
+ * Единый разбор листа Aliases. Терпит два формата строк:
+ *   NEW (авто):    A=AL_xxx, B=raw_uid, C=текст_синонима, D=источник
+ *   OLD (ручной):  A=код,    B=текст_синонима, C=тип, D=источник
+ *
+ * ВАЖНО: код считается валидным только при ТОЧНОМ совпадении с кодом каталога.
+ * Курируемые строки используют коды вида «RAW030» из старой схемы нумерации,
+ * которая НЕ соответствует текущему каталогу («RAW_030» — это другая позиция).
+ * Поэтому «нормализация подчёркивания» запрещена: она даёт уверенно-неверные
+ * привязки (например, «Сульфат марганца» → «Биогром Холин»). Такие строки
+ * помечаем resolved=false и НЕ используем для сопоставления.
+ */
+export function parseAliasRows(
+  aliasRows: any[][],
+  materials: { raw_uid: string }[],
+): ParsedAlias[] {
+  const validUids = new Set(materials.map(m => m.raw_uid));
+
+  const out: ParsedAlias[] = [];
+  for (const row of aliasRows) {
+    if (!row[0]) continue;
+    const col0 = String(row[0]);
+    let codeRaw: string | null;
+    let aliasText: string | null;
+    if (col0.startsWith("AL_")) {
+      codeRaw = row[1] ? String(row[1]) : null;
+      aliasText = row[2] ? String(row[2]) : null;
+    } else {
+      codeRaw = col0;
+      aliasText = row[1] ? String(row[1]) : null;
+    }
+    if (!codeRaw || !aliasText) continue;
+    const resolved = validUids.has(codeRaw);
+    out.push({
+      id: col0,
+      code: codeRaw,
+      canonical_raw_uid: resolved ? codeRaw : null,
+      resolved,
+      synonym: aliasText,
+      source: row[3] ? String(row[3]) : "",
+    });
+  }
+  return out;
+}
+
+// ─── Защита от неверных автопривязок (fuzzy-сопоставление) ───────────────────
+// Служебные / не-сырьевые токены: тара, фасовка, единицы измерения и т.п.
+// Они не несут смысла вещества, поэтому исключаются из сопоставления —
+// иначе общие слова («мешок», «кг», «упаковка») дают уверенно-неверные
+// привязки на пустом перекрытии. Для снабжения неверная привязка опаснее
+// отсутствия (можно заказать не то вещество).
+export const DENY_TOKENS = new Set<string>([
+  "мешок", "мешки", "мешка", "мешков", "мешочек",
+  "тара", "упаковка", "упак", "уп", "фасовка", "фасованный",
+  "пакет", "пакеты", "коробка", "короб", "ящик", "ящ",
+  "ведро", "канистра", "бочка", "фляга", "флакон", "банка",
+  "биг", "бэг", "бег", "бигбэг", "бигбег", "паллета", "паллет", "поддон",
+  "мкр", "полипропиленовый", "пп",
+  "кг", "г", "гр", "грамм", "мг", "л", "мл", "т", "тн", "тонна", "тоннах",
+  "шт", "штук", "штука", "штуки", "ед", "нетто", "брутто", "около",
+]);
+
+// Токен — это число с возможной единицей/процентом («25», «25кг», «32%», «0,5л»).
+const NUM_UNIT_RE = /^\d+([.,]\d+)?(кг|г|гр|мг|л|мл|т|тн|шт|%)?$/;
+
+/**
+ * Разбивает строку на «значащие» токены вещества: без тары/фасовки/единиц,
+ * без чисел и слишком коротких служебных слов. Эти токены — основа порога
+ * словного перекрытия для fuzzy-ветки.
+ */
+export function significantTokens(s: string): string[] {
+  return String(s)
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9%]+/gi, " ")
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length >= 3 && !DENY_TOKENS.has(t) && !NUM_UNIT_RE.test(t));
+}
+
+/**
+ * Оценивает уверенность fuzzy-совпадения по перекрытию значащих токенов.
+ * Возвращает >0 (балл) только если совпадение уверенное, иначе 0.
+ *
+ * Уверенным считаем случай, когда один набор значащих токенов целиком
+ * содержится в другом (кандидат «обёрнут» тарой/фасовкой во входной строке
+ * либо наоборот). Это отсекает совпадения по общему префиксу/служебному слову:
+ * «Сульфат марганца» и «Сульфат магния» делят лишь «сульфат» и НЕ являются
+ * подмножеством друг друга → привязки не будет.
+ */
+export function tokenMatchScore(aTokens: string[], bTokens: string[]): number {
+  if (!aTokens.length || !bTokens.length) return 0;
+  const aSet = new Set(aTokens);
+  const bSet = new Set(bTokens);
+  const shared = [...bSet].filter(t => aSet.has(t));
+  if (!shared.length) return 0;
+  const bSubsetOfA = [...bSet].every(t => aSet.has(t));
+  const aSubsetOfB = [...aSet].every(t => bSet.has(t));
+  if (!bSubsetOfA && !aSubsetOfB) return 0;
+  // Единственный общий токен должен быть достаточно характерным,
+  // иначе короткое общее слово свяжет разные вещества.
+  if (shared.length === 1 && shared[0].length < 5) return 0;
+  return shared.reduce((sum, t) => sum + t.length, 0) + shared.length;
+}
+
+/** Нормализация текста позиции для сравнения (нижний регистр, схлопнутые пробелы). */
+function normExcl(s: string): string {
+  return String(s).toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Фильтр «похоже на сырьё/добавку» — ТОЛЬКО для КД Липковской. В КД много
+ * мусора (хозтовары, запчасти, тара), который сырьём не является. Оставляем в
+ * распознавании лишь те позиции, что похожи на что-то из эталонного корпуса:
+ * справочник + синонимы + амбарка Полоцка (PlantStock) + компоненты рецепта.
+ *
+ * Похожесть — наличие общего «значащего» токена (тара/единицы/числа отброшены):
+ * либо характерного (>=4 симв.), либо хотя бы двух общих токенов. Возвращает
+ * множество имён, прошедших фильтр.
+ */
+export async function filterKdSimilar(names: string[]): Promise<Set<string>> {
+  const keep = new Set<string>();
+  if (!names.length) return keep;
+  const [materials, aliasRows, plantRows, recipeRows] = await Promise.all([
+    getAllRawMaterials(),
+    readRange("Aliases", "A2:D5000"),
+    readRange("PlantStock", "A2:G5000"),
+    readRange("RecipeLines", "A2:L5000"),
+  ]);
+  const refTexts: string[] = [];
+  for (const m of materials) { refTexts.push(m.full_name); refTexts.push(m.short_name); }
+  for (const a of parseAliasRows(aliasRows, materials)) refTexts.push(a.synonym);
+  for (const r of plantRows) if (r[2]) refTexts.push(String(r[2]));
+  for (const r of recipeRows) if (r[3]) refTexts.push(String(r[3]));
+
+  const refTokens = new Set<string>();
+  for (const t of refTexts) for (const tok of significantTokens(t)) refTokens.add(tok);
+
+  for (const name of names) {
+    const toks = significantTokens(name);
+    if (!toks.length) continue;
+    const shared = toks.filter(t => refTokens.has(t));
+    if (shared.some(t => t.length >= 4) || shared.length >= 2) keep.add(name);
+  }
+  return keep;
+}
+
 export async function findRawByAlias(alias: string): Promise<string | null> {
   const normalized = alias.toLowerCase().trim();
   const materials = await getAllRawMaterials();
@@ -178,20 +358,26 @@ export async function findRawByAlias(alias: string): Promise<string | null> {
   );
   if (direct) return direct.raw_uid;
 
-  // Aliases sheet lookup
+  // Aliases sheet lookup (формат-независимо, с резолвом кода)
   const aliasRows = await readRange("Aliases", "A2:D5000");
-  for (const row of aliasRows) {
-    if (row[2] && row[2].toLowerCase().trim() === normalized) {
-      return String(row[1]);
+  for (const a of parseAliasRows(aliasRows, materials)) {
+    if (a.canonical_raw_uid && a.synonym.toLowerCase().trim() === normalized) {
+      return a.canonical_raw_uid;
     }
   }
 
-  // Fuzzy — substring match
-  const fuzzy = materials.find(m =>
-    m.full_name.toLowerCase().includes(normalized.slice(0, 8)) ||
-    normalized.includes(m.full_name.toLowerCase().slice(0, 8))
-  );
-  return fuzzy ? fuzzy.raw_uid : null;
+  // Fuzzy — по уверенному перекрытию значащих токенов (с deny-list и порогом).
+  // Неуверенные кандидаты НЕ привязываются (возврат null → ручная проверка).
+  const nTokens = significantTokens(normalized);
+  if (!nTokens.length) return null;
+  let best: { uid: string; score: number } | null = null;
+  for (const m of materials) {
+    const sf = tokenMatchScore(nTokens, significantTokens(m.full_name));
+    if (sf > 0 && (!best || sf > best.score)) best = { uid: m.raw_uid, score: sf };
+    const ss = tokenMatchScore(nTokens, significantTokens(m.short_name));
+    if (ss > 0 && (!best || ss > best.score)) best = { uid: m.raw_uid, score: ss };
+  }
+  return best ? best.uid : null;
 }
 
 /**
@@ -208,31 +394,23 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
   // Build lookup structures
   const byFullName  = new Map(materials.map(m => [m.full_name.toLowerCase().trim(), m.raw_uid]));
   const byShortName = new Map(materials.map(m => [m.short_name.toLowerCase().trim(), m.raw_uid]));
-  const validUids   = new Set(materials.map(m => m.raw_uid));
 
+  // Синонимы → канонический код каталога (формат-независимо, RAW001 ⇔ RAW_001).
+  // Нерезолвящиеся коды (например, RAW070 — нет в каталоге) пропускаем.
   const byAlias = new Map<string, string>();
-  for (const row of aliasRows) {
-    if (!row[0]) continue;
-    const col0 = String(row[0]);
-    // Detect format:
-    // NEW (code-generated): A=AL_xxx id, B=raw_uid, C=alias_text, D=source
-    // OLD (manual):         A=RAW_uid,  B=alias_text, C=description, D=source
-    if (col0.startsWith("AL_") && row[1] && row[2]) {
-      // new format
-      byAlias.set(String(row[2]).toLowerCase().trim(), String(row[1]));
-    } else if (validUids.has(col0) && row[1]) {
-      // old format: col A is a valid raw_uid
-      byAlias.set(String(row[1]).toLowerCase().trim(), col0);
-    } else if (!col0.startsWith("AL_") && row[1] && row[2]) {
-      // old format variant: A might be RAW001 (no underscore) — try mapping anyway
-      if (row[1]) byAlias.set(String(row[1]).toLowerCase().trim(), col0);
-    }
+  for (const a of parseAliasRows(aliasRows, materials)) {
+    if (a.canonical_raw_uid) byAlias.set(a.synonym.toLowerCase().trim(), a.canonical_raw_uid);
   }
 
-  // Pre-build sorted alias entries for substring matching (longest first avoids false short matches)
-  const aliasEntries = Array.from(byAlias.entries())
-    .filter(([k]) => k.length >= 5)
-    .sort((a, b) => b[0].length - a[0].length);
+  // Pre-build значащие токены кандидатов для fuzzy-ветки (deny-list + порог).
+  const aliasTokenList = Array.from(byAlias.entries())
+    .map(([alias, uid]) => ({ uid, tokens: significantTokens(alias) }))
+    .filter(e => e.tokens.length > 0);
+  const materialTokenList = materials.map(m => ({
+    uid: m.raw_uid,
+    fullTokens: significantTokens(m.full_name),
+    shortTokens: significantTokens(m.short_name),
+  }));
 
   const result = new Map<string, string | null>();
   for (const name of names) {
@@ -241,19 +419,26 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
     if (byShortName.has(n)) { result.set(name, byShortName.get(n)!); continue; }
     if (byAlias.has(n))     { result.set(name, byAlias.get(n)!);     continue; }
 
-    // Fuzzy 1: vendor name CONTAINS a known alias (КД-style: "Актиген мешок 25 кг." contains alias "Актиген")
-    const aliasHit = aliasEntries.find(([alias]) => n.includes(alias));
-    if (aliasHit) { result.set(name, aliasHit[1]); continue; }
+    // Fuzzy: только уверенное перекрытие значащих токенов. Тара/фасовка/единицы
+    // («мешок 25 кг», «32%») отброшены, совпадения по общему слову не проходят.
+    // Неуверенные кандидаты → null → строка уходит в очередь на ручную проверку.
+    const nTokens = significantTokens(name);
+    if (!nTokens.length) { result.set(name, null); continue; }
 
-    // Fuzzy 2: vendor name CONTAINS a material full_name or vice-versa (min 6 chars to avoid false positives)
-    const matHit = materials.find(m => {
-      const fn = m.full_name.toLowerCase();
-      const sn = m.short_name.toLowerCase();
-      return (fn.length >= 6 && n.includes(fn)) ||
-             (fn.length >= 6 && fn.includes(n)) ||
-             (sn.length >= 6 && n.includes(sn));
-    });
-    result.set(name, matHit ? matHit.raw_uid : null);
+    let best: { uid: string; score: number } | null = null;
+    // Fuzzy 1: перекрытие с известным синонимом (курируемые имена точнее).
+    for (const e of aliasTokenList) {
+      const s = tokenMatchScore(nTokens, e.tokens);
+      if (s > 0 && (!best || s > best.score)) best = { uid: e.uid, score: s };
+    }
+    // Fuzzy 2: перекрытие с позицией каталога (full / short name).
+    for (const m of materialTokenList) {
+      const sf = tokenMatchScore(nTokens, m.fullTokens);
+      if (sf > 0 && (!best || sf > best.score)) best = { uid: m.uid, score: sf };
+      const ss = tokenMatchScore(nTokens, m.shortTokens);
+      if (ss > 0 && (!best || ss > best.score)) best = { uid: m.uid, score: ss };
+    }
+    result.set(name, best ? best.uid : null);
   }
   return result;
 }
@@ -296,17 +481,42 @@ export async function addToReviewQueueBatch(
   items: { text: string; source_type: string; file_name: string }[]
 ): Promise<void> {
   if (!items.length) return;
-  const rows = items.map(it => [
-    `RQ_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    it.text, it.source_type, it.file_name, "FALSE", new Date().toISOString(),
+  // Не добавляем то, что уже исключено пользователем («не сырьё»), и не плодим
+  // дубли с уже висящими в очереди нерешёнными позициями.
+  const [excluded, existing] = await Promise.all([
+    getExcludedSet(),
+    readRange("ReviewQueue", "A2:F2000"),
   ]);
-  await appendRows("ReviewQueue", rows);
+  const queued = new Set<string>();
+  for (const r of existing) {
+    if (r[0] && String(r[4]).toUpperCase() !== "TRUE") queued.add(normExcl(String(r[1] || "")));
+  }
+  const seen = new Set<string>();
+  const rows: any[][] = [];
+  items.forEach((it, i) => {
+    const key = normExcl(it.text);
+    if (!key || excluded.has(key) || queued.has(key) || seen.has(key)) return;
+    seen.add(key);
+    rows.push([
+      `RQ_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+      it.text, it.source_type, it.file_name, "FALSE", new Date().toISOString(),
+    ]);
+  });
+  if (rows.length) await appendRows("ReviewQueue", rows);
 }
 
 export async function getUnresolvedQueue(): Promise<any[]> {
-  const rows = await readRange("ReviewQueue", "A2:F2000");
+  const [rows, excluded] = await Promise.all([
+    readRange("ReviewQueue", "A2:F2000"),
+    getExcludedSet(),
+  ]);
   return rows
     .filter(r => r[0] && String(r[4]).toUpperCase() !== "TRUE")
+    // Скрываем чисто числовые строки (425, 6799, 1,500.000 и т.п.) — это суммы/
+    // количества, ошибочно попавшие в очередь до фикса парсера, а не сырьё.
+    .filter(r => !/^[\d\s.,]+$/.test(String(r[1] || "").trim()))
+    // Скрываем то, что пользователь ранее исключил как «не сырьё».
+    .filter(r => !excluded.has(normExcl(String(r[1] || ""))))
     .map(r => ({
       id: r[0],
       original_text: r[1],
@@ -324,6 +534,69 @@ export async function resolveQueueItem(queue_id: string): Promise<void> {
       return;
     }
   }
+}
+
+/** Помечает обработанными ВСЕ нерешённые строки очереди с данным текстом. */
+export async function resolveQueueByText(text: string): Promise<void> {
+  const key = normExcl(text);
+  const rows = await readRange("ReviewQueue", "A2:F2000");
+  if (!rows.length) return;
+  let changed = false;
+  const eCol = rows.map(r => {
+    const cur = String(r[4] || "");
+    if (r[0] && normExcl(String(r[1] || "")) === key && cur.toUpperCase() !== "TRUE") {
+      changed = true;
+      return ["TRUE"];
+    }
+    return [cur];
+  });
+  if (changed) await writeRange("ReviewQueue", `E2:E${eCol.length + 1}`, eCol);
+}
+
+// ─── EXCLUDED (исключённые из распознавания «не сырьё») ───────────────────────
+// Лист Excluded: A=нормализованный текст, B=исходный текст, C=источник, D=дата.
+// Исключения глобальные и постоянные — позиция не попадёт в распознавание ни при
+// одной будущей загрузке.
+
+export async function getExcludedSet(): Promise<Set<string>> {
+  await ensureSheets(["Excluded"]);
+  const rows = await readRange("Excluded", "A2:D5000");
+  const set = new Set<string>();
+  for (const r of rows) if (r[0]) set.add(normExcl(String(r[0])));
+  return set;
+}
+
+export async function getExcludedList(): Promise<
+  { text: string; source_type: string; created_at: string }[]
+> {
+  await ensureSheets(["Excluded"]);
+  const rows = await readRange("Excluded", "A2:D5000");
+  return rows
+    .filter(r => r[0])
+    .map(r => ({
+      text: String(r[1] || r[0]),
+      source_type: String(r[2] || ""),
+      created_at: String(r[3] || ""),
+    }))
+    .reverse();
+}
+
+export async function addExcludedBatch(
+  items: { text: string; source_type: string }[]
+): Promise<void> {
+  if (!items.length) return;
+  await ensureSheets(["Excluded"]);
+  const existing = await readRange("Excluded", "A2:D5000");
+  const have = new Set(existing.map(r => normExcl(String(r[0] || ""))));
+  const seen = new Set<string>();
+  const rows: any[][] = [];
+  for (const it of items) {
+    const key = normExcl(it.text);
+    if (!key || have.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    rows.push([key, it.text, it.source_type, new Date().toISOString()]);
+  }
+  if (rows.length) await appendRows("Excluded", rows);
 }
 
 // ─── PLANT STOCK ────────────────────────────────────────────────────────────

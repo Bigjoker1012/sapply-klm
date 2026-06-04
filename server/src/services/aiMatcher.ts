@@ -34,8 +34,8 @@ export async function suggestMatches(
 ${catalog}
 
 Правила:
-- Отвечай ТОЛЬКО валидным JSON-массивом без лишнего текста
-- Для каждого элемента укажи поля: original_text, suggested_raw_uid (или null если нет совпадения), confidence ("high"/"medium"/"low"), reason (кратко по-русски)
+- Отвечай ТОЛЬКО валидным JSON-объектом вида {"results": [ ... ]} без лишнего текста
+- В массиве results для каждого элемента укажи поля: original_text, suggested_raw_uid (или null если нет совпадения), confidence ("high"/"medium"/"low"), reason (кратко по-русски)
 - "high" — очевидное совпадение (витамин А = вит А 1000, биоплекс марганец = биоплекс Mn)
 - "medium" — вероятное совпадение (разные формы одного вещества)
 - "low" — предположение
@@ -67,13 +67,14 @@ ${catalog}
     }));
   }
 
+  // response_format=json_object вынуждает модель вернуть объект-обёртку, но ключ
+  // может быть любым (results/matches/данные/…). Сначала пробуем results,
+  // затем берём первый массив из значений объекта.
   const arr: AiSuggestion[] = Array.isArray(parsed)
     ? parsed
-    : Array.isArray(parsed.matches)
-    ? parsed.matches
-    : Array.isArray(parsed.results)
+    : Array.isArray(parsed?.results)
     ? parsed.results
-    : [];
+    : (Object.values(parsed ?? {}).find(v => Array.isArray(v)) as AiSuggestion[] | undefined) ?? [];
 
   return arr.map((s: any) => ({
     original_text: s.original_text || "",

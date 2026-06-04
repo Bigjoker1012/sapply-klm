@@ -48,6 +48,78 @@ export async function parsePolotskPdf(buffer: Buffer): Promise<ParsedRow[]> {
   return rows;
 }
 
+// ─── Recipe PDF — текстовый слой (цифровые PDF) ───────────────────────────────
+
+/** Русское число: «3 208,16» → 3208.16 (пробел — тысячи, запятая — десятичная). */
+function parseRuNum(s: string): number {
+  const v = parseFloat(String(s).replace(/\s/g, "").replace(",", "."));
+  return isNaN(v) ? 0 : v;
+}
+
+// Строка компонента: «НАИМЕНИЕ  40,102 %  3 208,16 ...» — имя, % ввода, кол-во кг.
+const RECIPE_COMP_RE = /^(.+?)\s+(\d[\d ]*[.,]?\d*)\s*%\s+([\d ]+[.,]\d+)/;
+
+/**
+ * Парсинг рецепта из текстового слоя PDF (цифровые рецепты Полоцкого КХП).
+ * Компоненты идут до раздела «Показатели качества». Возвращает null, если
+ * подходящих строк не найдено (тогда вызывающий код уходит в OCR-фолбэк).
+ */
+function parseRecipeFromText(text: string): ParsedRecipe | null {
+  const lines = text.split("\n");
+
+  let code = "";
+  let name = "";
+  let date = "";
+  let batchKg = 0;
+
+  for (const raw of lines.slice(0, 40)) {
+    const line = raw.trim();
+    if (!line) continue;
+    // Строка-код вида «КК-61-1 С-к Б20 ПЛЦ-0» / «Д-П60-3 Б20 ПЛЦ8».
+    if (!code && /ПЛЦ[-\s]?\d/i.test(line) && line.length < 40 && /^[A-Za-zА-ЯЁа-яё]/.test(line)) {
+      code = line;
+    }
+    if (!date) {
+      const m = line.match(/(\d{2}[.\-/]\d{2}[.\-/]\d{4})/);
+      if (m) date = m[1];
+    }
+    if (!batchKg) {
+      // \b не работает после кириллической «т», поэтому без границы слова.
+      const m = line.match(/Выработка[:\s]*(\d[\d.,\s]*?)\s*т/i);
+      if (m) batchKg = parseRuNum(m[1]) * 1000;
+    }
+    if (!name) {
+      const m = line.match(/^Для\s+(.+)$/i);
+      if (m) name = m[1].trim();
+    }
+  }
+
+  const rows: RecipeRow[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (/Показатели\s+качества/i.test(line)) break; // дальше — показатели, не сырьё
+    const m = line.match(RECIPE_COMP_RE);
+    if (!m) continue;
+    const rawName = m[1].trim();
+    if (rawName.length < 2) continue;
+    if (/^(состав|в рецепте)/i.test(rawName)) continue;
+    const percentage = parseRuNum(m[2]);
+    const quantityPerTon = parseRuNum(m[3]);
+    if (percentage <= 0) continue;
+    rows.push({ rawName, percentage, quantityPerTon });
+  }
+
+  if (rows.length === 0) return null;
+
+  return {
+    name: name || code || "Рецепт",
+    code,
+    date: date || new Date().toISOString().split("T")[0],
+    batchKg: batchKg || 1000,
+    rows,
+  };
+}
+
 // ─── Recipe PDF via OCR (tesseract 5.5) ───────────────────────────────────────
 
 /**
@@ -74,6 +146,16 @@ function resolveOcrScript(): string {
 const OCR_SCRIPT = resolveOcrScript();
 
 export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
+  // 1) Цифровые PDF: парсим текстовый слой напрямую (быстро, без OCR/MuPDF).
+  try {
+    const data = await pdfParse(buffer);
+    const fromText = parseRecipeFromText(data.text);
+    if (fromText && fromText.rows.length > 0) return fromText;
+  } catch {
+    // Текстового слоя нет/повреждён — уходим в OCR-фолбэк ниже.
+  }
+
+  // 2) Сканы: рендер страницы в изображение + tesseract.
   const tmpFile = join(tmpdir(), `klm_recipe_${Date.now()}.pdf`);
   try {
     await writeFile(tmpFile, buffer);

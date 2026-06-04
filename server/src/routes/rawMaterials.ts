@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { getAllRawMaterials, writeRange, readRange } from "../services/sheetsService";
+import { getAllRawMaterials, writeRange, readRange, deleteRawMaterial } from "../services/sheetsService";
 
 const router = Router();
 
@@ -57,6 +57,16 @@ router.patch("/:uid", async (req: Request, res: Response) => {
       }
     }
     res.status(404).json({ error: "Не найдено" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/:uid", async (req: Request, res: Response) => {
+  try {
+    const ok = await deleteRawMaterial(req.params.uid);
+    if (!ok) return res.status(404).json({ error: "Позиция не найдена" });
+    res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

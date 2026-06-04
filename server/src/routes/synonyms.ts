@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import {
-  readRange, appendRows, getAllRawMaterials,
+  readRange, getAllRawMaterials, parseAliasRows,
   getUnresolvedQueue, resolveQueueItem, addAlias,
 } from "../services/sheetsService";
 import { suggestMatches } from "../services/aiMatcher";
@@ -14,15 +14,16 @@ router.get("/", async (_req: Request, res: Response) => {
       getAllRawMaterials(),
     ]);
     const nameMap = new Map(materials.map(m => [m.raw_uid, m.full_name]));
-    const result = aliasRows
-      .filter(r => r[0] && r[1] && r[2])
-      .map(r => ({
-        id: r[0],
-        raw_uid: r[1],
-        name: nameMap.get(r[1]) || r[1],
-        synonym: r[2],
-        source: r[3] || "",
-      }));
+    const result = parseAliasRows(aliasRows, materials).map(a => ({
+      id: a.id,
+      canonical_raw_uid: a.canonical_raw_uid,
+      name: a.canonical_raw_uid
+        ? (nameMap.get(a.canonical_raw_uid) || a.canonical_raw_uid)
+        : "(не привязано)",
+      resolved: a.resolved,
+      synonym: a.synonym,
+      source: a.source,
+    }));
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

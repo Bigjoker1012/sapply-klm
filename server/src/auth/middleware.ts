@@ -58,7 +58,27 @@ export async function loadUser(req: Request): Promise<AuthedUser | null> {
   };
 }
 
+/**
+ * ВРЕМЕННО: авторизация полностью отключена по просьбе пользователя.
+ * Пока флаг = true, любой запрос проходит как встроенный admin-пользователь,
+ * без проверки токена. Чтобы вернуть нормальный вход — поставить false.
+ */
+const AUTH_DISABLED = true;
+
+const DEV_USER: AuthedUser = {
+  id: 0,
+  login: "dev@klm.by",
+  name: "Разработка (авторизация отключена)",
+  role: "admin",
+  organizationId: null,
+};
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (AUTH_DISABLED) {
+    req.user = DEV_USER;
+    next();
+    return;
+  }
   const u = await loadUser(req);
   if (!u) {
     res.status(401).json({ error: "Не авторизован" });
@@ -70,6 +90,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
 export function requireRole(...allowed: UserRole[]) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (AUTH_DISABLED) {
+      req.user = DEV_USER;
+      next();
+      return;
+    }
     const u = await loadUser(req);
     if (!u) { res.status(401).json({ error: "Не авторизован" }); return; }
     if (!allowed.includes(u.role)) { res.status(403).json({ error: "Доступ запрещён" }); return; }

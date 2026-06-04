@@ -5,9 +5,11 @@ import {
   writePlantStock, writeLipStockBatch, writeLipBatchesBulk,
   writeRecipe, writeRecipeLines, writeNeedFromRecipe,
   getUnresolvedQueue, resolveQueueItem, addAlias,
+  filterKdSimilar, getExcludedList, addExcludedBatch, resolveQueueByText,
 } from "../services/sheetsService";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
 import { parsePolotskExcel, parseRecipeExcel, parseKdExcel } from "../services/excelParser";
+import { saveDocument } from "../services/documentArchive";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
@@ -50,6 +52,8 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
       queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
 
+    await saveDocument("polotsk", req.file);
+
     res.json({ ok: true, total: parsed.length, matched, unmatched, message: `Загружено: ${matched}, не распознано: ${unmatched}` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -90,6 +94,8 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
       newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
       queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
+
+    await saveDocument("lipkovskaya", req.file);
 
     res.json({
       ok: true,
@@ -177,6 +183,8 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines);
 
+    await saveDocument("recipe", req.file);
+
     res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -226,21 +234,32 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
       raw_uid, name_from_source: v.name, qty: v.qty, source: "kd_file",
     }));
 
+    // 2b. Фильтр похожести — ТОЛЬКО для КД: в распознавание попадает лишь то, что
+    // похоже на сырьё/добавки (справочник, амбарка Полоцка, рецепт). Остальное
+    // (хозтовары, запчасти, тара) отбрасываем как «не сырьё».
+    const similar = await filterKdSimilar(queueItems.map(q => q.text));
+    const filteredQueue = queueItems.filter(q => similar.has(q.text));
+    const ignored = queueItems.length - filteredQueue.length;
+
     // 3. Write everything in parallel (LipBatches + LipStock aggregate + aliases + queue)
     await Promise.all([
       writeLipBatchesBulk(batchRows),
       writeLipStockBatch(lipStockRows),
       newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
-      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+      filteredQueue.length ? addToReviewQueueBatch(filteredQueue) : Promise.resolve(),
     ]);
+
+    await saveDocument("kd", req.file);
 
     res.json({
       ok: true,
       total: parsed.length,
       matched,
-      unmatched,
+      unmatched: filteredQueue.length,
+      ignored,
       batches: batchRows.length,
-      message: `КД загружен: ${matched} позиций (${batchRows.length} партий), не распознано: ${unmatched}`,
+      message: `КД загружен: ${matched} позиций (${batchRows.length} партий), к распознаванию: ${filteredQueue.length}` +
+        (ignored ? `, отсеяно не-сырья: ${ignored}` : ""),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -264,6 +283,33 @@ router.post("/unmatched/confirm", async (req: Request, res: Response) => {
     if (uid && synonym) await addAlias(uid, synonym, "manual");
     if (queueId) await resolveQueueItem(queueId);
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Исключённые («не сырьё») ────────────────────────────────────────────────
+
+// Исключить позицию навсегда: записываем в список исключений (больше не попадёт
+// в распознавание ни при одной загрузке) и закрываем все строки очереди с этим
+// текстом.
+router.post("/unmatched/exclude", async (req: Request, res: Response) => {
+  const { text } = req.body;
+  try {
+    if (!text || !String(text).trim()) {
+      return res.status(400).json({ error: "Не указан текст позиции" });
+    }
+    await addExcludedBatch([{ text: String(text), source_type: "manual" }]);
+    await resolveQueueByText(String(text));
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/excluded", async (_req: Request, res: Response) => {
+  try {
+    res.json(await getExcludedList());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

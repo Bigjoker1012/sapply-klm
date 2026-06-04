@@ -14,7 +14,23 @@ export interface KdRow {
 
 const KD_BATCH_RE = /\s*,?\s*партия\s+(\S+)\s*$/i;
 
-const KD_SKIP_RE = /^(склад|номенклатура|итог|период|показат|группир|отбор|доп)/i;
+const KD_SKIP_RE = /^(склад|номенклатура|итог|период|показат|группир|отбор|доп|ведомость)/i;
+
+// Дата в колонках «Дата поставки»/«Срок годности» (ДД.ММ.ГГ) — признак строки
+// серии (партии), а не номенклатуры.
+const KD_DATE_RE = /^\d{1,2}\.\d{1,2}\.\d{2,4}$/;
+
+/**
+ * Строка документа движения (регистратора) в выгрузке 1С дублирует текст через
+ * запятую: «Перемещение товаров ..., Перемещение товаров ...» или пустая «, ».
+ * Такие строки не являются номенклатурой и должны отбрасываться.
+ */
+function isKdDocRow(value: string): boolean {
+  const t = value.trim();
+  if (t === ",") return true;
+  const m = t.match(/^(.+?),\s*(.+)$/);
+  return !!(m && m[1].trim() === m[2].trim());
+}
 
 export interface RecipeRow {
   rawName: string;
@@ -24,13 +40,44 @@ export interface RecipeRow {
 
 /**
  * Парсинг КД "Ведомость по партиям товаров на складах" (Липковская/1С).
- * Формат: col B (index 1) = наименование + партия, col I (index 8) = конечный остаток.
- * Возвращает строки с baseName (без суффикса партии), batchCode и qty.
+ *
+ * Поддерживает два варианта выгрузки 1С:
+ *   • «широкий» — раздельные колонки Количество/Стоимость, «Конечный остаток
+ *     (количество)» в col H (index 7);
+ *   • «по партиям» — col A = наименование, col B/C = Дата поставки/Срок годности,
+ *     «Конечный остаток» в col G (index 6), под номенклатурой — строки серий
+ *     (с датами) и документов движения.
+ *
+ * Колонка конечного остатка ищется динамически по ячейке-заголовку «Конечный
+ * остаток» (fallback — index 7). Берём только строки уровня номенклатуры:
+ * отбрасываем строки серий (даты в col B/C) и строки документов движения
+ * (дублирование «X, X»). Наименование — col A (index 0). Числа формата 1,500.000
+ * (запятая — разделитель тысяч) приводятся к числу.
  */
 export function parseKdExcel(buffer: Buffer): KdRow[] {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+  // Динамический поиск колонки «Конечный остаток» по строке-заголовку.
+  // Сравниваем ячейку целиком (не подстрокой) — иначе совпадёт описательная
+  // строка «Показатели: ...Конечный остаток(Количество);...».
+  let qtyCol = -1;
+  for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    const row = rows[r];
+    if (!row) continue;
+    for (let c = 0; c < row.length; c++) {
+      // Заголовок-ячейка вида «Конечный остаток» / «Конечный остаток (количество)».
+      // Описательная строка «Показатели: ...» начинается с «Показатели», поэтому
+      // под якорь ^ не попадает.
+      if (/^конечный остаток/i.test(String(row[c] || "").trim())) {
+        qtyCol = c;
+        break;
+      }
+    }
+    if (qtyCol >= 0) break;
+  }
+  if (qtyCol < 0) qtyCol = 7;
 
   const results: KdRow[] = [];
 
@@ -38,14 +85,23 @@ export function parseKdExcel(buffer: Buffer): KdRow[] {
     const row = rows[r];
     if (!row) continue;
 
-    const vendorName = String(row[1] || "").trim();
+    const vendorName = String(row[0] || "").trim();
     if (!vendorName || vendorName.length < 3) continue;
     if (KD_SKIP_RE.test(vendorName)) continue;
+    // Пропускаем чисто числовые ячейки (1500, 6 799, 1,500.000 и т.п.) — это
+    // суммы/количества, ошибочно попавшие в колонку наименования, а не сырьё.
+    if (/^[\d\s.,]+$/.test(vendorName)) continue;
+    // Строки серий (партий) содержат даты в col B/C — это не номенклатура.
+    if (KD_DATE_RE.test(String(row[1] || "").trim()) ||
+        KD_DATE_RE.test(String(row[2] || "").trim())) continue;
+    // Строки документа движения дублируют текст «X, X» — отбрасываем.
+    if (isKdDocRow(vendorName)) continue;
 
-    // Column I (index 8) = конечный остаток кол-во
-    const qtyRaw = row[8];
+    const qtyRaw = row[qtyCol];
     if (qtyRaw == null || qtyRaw === "") continue;
-    const qty = parseFloat(String(qtyRaw).replace(/\s/g, "").replace(",", "."));
+    const qty = typeof qtyRaw === "number"
+      ? qtyRaw
+      : parseFloat(String(qtyRaw).replace(/[\s,]/g, ""));
     if (isNaN(qty) || qty <= 0) continue;
 
     // Extract batch code from trailing "партия XXXXX"

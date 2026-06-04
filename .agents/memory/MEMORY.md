@@ -1,6 +1,6 @@
-- [SQLite DATABASE_URL guard](sqlite-database-url-guard.md) — если env содержит postgres-URL, better-sqlite3 создаст директорию с этим именем; всегда фильтруй схему.
-- [Drizzle 0.36 insert types](drizzle-036-insert-types.md) — insert-типы для колонок с default() слишком узкие; либо `as any`, либо raw `sql\`INSERT OR IGNORE\`` (последнее даёт идемпотентность бесплатно).
-- [Login hardening pattern](login-hardening.md) — обязательный набор: всегда bcrypt.compare против dummy-хеша при miss + in-memory rate-limit по ip|login + единое сообщение «Неверный email или пароль».
-- [Legacy payload contract](legacy-payload-contract.md) — при переписывании бэк-роута сначала grep-нуть фронт на точные имена полей: axios не словит расхождение, UI молча покажет пустоту.
-- [tsc не копирует JSON в dist](tsc-json-assets.md) — скрипты с `__dirname`-путём к JSON ломаются в проде; резолвить через массив кандидатов (`__dirname` + `process.cwd()`) или копировать на build.
-- [drizzle-kit push SQL-default drift](drizzle-push-sql-default-drift.md) — колонки с raw-SQL default (to_char/now) каждый push заново шлют ALTER SET DEFAULT; идемпотентно, но шумно — не считать багом.
+- [Aliases vs catalog codes](aliases-vs-catalog-codes.md) — synonym codes (RAW030) ≠ catalog codes (RAW_030); never normalize by underscore, only exact match; trust synonym TEXTS not codes.
+- [Sheets vs Postgres split](sheets-vs-postgres-split.md) — recognition/upload flow = Google Sheets; dashboard decisions = Postgres; read unmatched+catalog from Sheets endpoints, not /dashboard/all.
+- [КД 1С «Ведомость по партиям»](kd-1c-vedomost-format.md) — два формата (qty в col H/7 или G/6); искать колонку «Конечный остаток» динамически, не хардкодить; отбрасывать строки серий и документов движения.
+- [Парсинг рецепта PDF](recipe-pdf-text-layer.md) — цифровые PDF, парсить текстовым слоем (pdf-parse), OCR только фолбэк; чисто-OCR падал MuPDF «No common ancestor».
+- [Свободный ввод сырья](material-picker-resolve.md) — авто-резолв названия в raw_uid только по ТОЧНОМУ совпадению каталога, не по includes; иначе молча привяжется не то сырьё.
+- [Lost work recovery](lost-work-recovery.md) — если main сброшен на origin/main и фичи пропали из исходников, работа в gitsafe-backup/main + reflog; восстанавливать `git show <tip>:path > path` (деструктивный git заблокирован).

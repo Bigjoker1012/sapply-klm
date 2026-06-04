@@ -12,3 +12,15 @@ id = "ilGkSaknji8VilpsgqIcV"
 uri = "file://docs/Инструкция Supply KLM.docx"
 type = "word_document"
 title = "Инструкция Supply KLM — по ролям (Word)"
+
+[[outputs]]
+id = "XQlHK1T7Iu7_hmyNl_NKJ"
+uri = "file://docs/Supply KLM - техническое описание.docx"
+type = "word_document"
+title = "Supply KLM — техническое описание"
+
+[[outputs]]
+id = "Q2wfrOtQfgA6niHuAMFA5"
+uri = "file://.local/synonyms_remap_review.csv"
+type = "table"
+title = "Перепривязка синонимов — на проверку (131 строка)"
