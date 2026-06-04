@@ -183,7 +183,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines);
 
-    await saveDocument("recipe", req.file);
+    await saveDocument("recipe", req.file, recipeUid);
 
     res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched });
   } catch (err: any) {

@@ -11,4 +11,6 @@ The app is a half-finished Sheets→Postgres migration. The two stores are NOT i
 
 **Why this matters:** the recognition UI block must read `unmatched` and its catalog from the **Sheets** endpoints (`/api/upload/unmatched`, `/api/raw-materials`), NOT from `/dashboard/all`. Using the Postgres `unmatched` shows 0 even when uploads reported "N не распознано" — a confusing contradiction the user hit.
 
+- **Рецепты = виртуальное списание через лист `Need`, не трогают остатки.** Загрузка рецепта пишет потребность в `Need` (recipe_uid в col B). Доступное = остаток − `getNeedTotals()` (так и на дашборде, и в планировании). «Откат рецепта» = удаление документа-рецепта в архиве → снимает строки `Need` этого рецепта (`deleteNeedByRecipe`), количества возвращаются. Связь документ↔рецепт через `document_archive.recipe_uid`. Откат: сначала чистим Need, потом удаляем документ (иначе потеря возможности повтора при сбое Sheets).
+
 **How to apply:** when wiring any recognition/aliases/catalog feature, stay on the Sheets endpoints so raw_uid keys line up with what `matchBatch` and `addAlias` use. `ReviewQueue` accumulates duplicates across re-uploads (no dedup on append) — dedup by `original_text` in the UI and resolve all queue rows sharing that text on confirm.

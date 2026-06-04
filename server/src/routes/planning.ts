@@ -16,6 +16,7 @@ import {
   getLatestPlantStock,
   getLatestLipStock,
   getInboundTotals,
+  getNeedTotals,
 } from "../services/sheetsService";
 
 const router = Router();
@@ -37,12 +38,15 @@ router.get("/", async (_req: Request, res: Response) => {
   try {
     // Остатки и каталог берём из Google Sheets — это фактический источник
     // введённых пользователем данных (Полоцк + Липковская + в пути).
-    // Настройки планирования (коэффициент / ручной ввод) — из Postgres.
-    const [catalog, plant, lip, inbound, settingRes] = await Promise.all([
+    // Из остатка вычитаем потребность по рецептам (лист Need) — рецепт
+    // «списывается» и в планировании. Настройки (коэффициент / ручной
+    // ввод) — из Postgres.
+    const [catalog, plant, lip, inbound, need, settingRes] = await Promise.all([
       getAllRawMaterials(),
       getLatestPlantStock(),
       getLatestLipStock(),
       getInboundTotals(),
+      getNeedTotals(),
       db.execute(sql`SELECT sku_code, coefficient, manual_input, manual_avg_usage FROM purchase_plan_setting`),
     ]);
 
@@ -64,7 +68,8 @@ router.get("/", async (_req: Request, res: Response) => {
         const qty_today =
           (plant.get(m.raw_uid) || 0) +
           (lip.get(m.raw_uid) || 0) +
-          (inbound.get(m.raw_uid) || 0);
+          (inbound.get(m.raw_uid) || 0) -
+          (need.get(m.raw_uid) || 0);
         return {
           raw_uid: m.raw_uid,
           name: m.full_name,

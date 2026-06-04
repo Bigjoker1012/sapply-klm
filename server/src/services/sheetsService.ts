@@ -837,6 +837,22 @@ export async function getNeedTotals(): Promise<Map<string, number>> {
   return map;
 }
 
+/**
+ * Снимает потребность конкретного рецепта (откат): удаляет из листа Need все
+ * строки с данным recipe_uid (col B / r[1]). Используется при удалении
+ * документа-рецепта — количества «возвращаются» в доступный остаток.
+ * Возвращает число удалённых строк.
+ */
+export async function deleteNeedByRecipe(recipe_uid: string): Promise<number> {
+  const rows = await readRange("Need", "A2:H5000");
+  const keepRows = rows.filter(r => String(r[1]) !== recipe_uid);
+  const removed = rows.length - keepRows.length;
+  if (removed === 0) return 0;
+  await clearRange("Need", "A2:H5000");
+  if (keepRows.length) await writeRange("Need", `A2:H${keepRows.length + 1}`, keepRows);
+  return removed;
+}
+
 // ─── RECIPES ────────────────────────────────────────────────────────────────
 
 export async function writeRecipe(recipe: {

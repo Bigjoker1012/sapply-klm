@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { documentArchive, DocumentType } from "../db/schema";
 
@@ -29,19 +29,28 @@ export function decodeFileName(name: string): string {
  * Ошибки логируются, но не пробрасываются — сбой архивации не должен ломать
  * саму загрузку данных (парсинг уже выполнен успешно).
  */
-export async function saveDocument(docType: DocumentType, file: UploadedFile): Promise<number | null> {
+export async function saveDocument(
+  docType: DocumentType,
+  file: UploadedFile,
+  recipeUid?: string,
+): Promise<number | null> {
   try {
-    const [row] = await db
-      .insert(documentArchive)
-      .values({
-        docType,
-        fileName: decodeFileName(file.originalname),
-        mimeType: file.mimetype || "application/octet-stream",
-        fileData: file.buffer.toString("base64"),
-        sizeBytes: file.buffer.length,
-      })
-      .returning({ id: documentArchive.id });
-    return row?.id ?? null;
+    // Raw SQL: типизированный insert drizzle в этой большой схеме не «видит»
+    // nullable-колонку recipe_uid (ограничение вывода типов под нашим tsc-
+    // билдом, как и в planning PATCH). uploaded_at заполняется DB-дефолтом.
+    const rows = (await db.execute(sql`
+      INSERT INTO document_archive (doc_type, file_name, mime_type, file_data, size_bytes, recipe_uid)
+      VALUES (
+        ${docType},
+        ${decodeFileName(file.originalname)},
+        ${file.mimetype || "application/octet-stream"},
+        ${file.buffer.toString("base64")},
+        ${file.buffer.length},
+        ${recipeUid ?? null}
+      )
+      RETURNING id
+    `)).rows as Array<{ id: number }>;
+    return rows[0]?.id ?? null;
   } catch (err) {
     console.error("[documentArchive] не удалось сохранить файл в архив:", err);
     return null;

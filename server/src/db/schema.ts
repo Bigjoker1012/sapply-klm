@@ -567,6 +567,13 @@ export const documentArchive = pgTable("document_archive", {
   fileData: text("file_data").notNull(),
   /** Размер файла в байтах */
   sizeBytes: integer("size_bytes").notNull(),
+  /**
+   * Для документов-рецептов — uid рецепта (REC_…), к которому привязана
+   * потребность в листе Need. При удалении такого документа потребность
+   * этого рецепта тоже снимается (количества «возвращаются»). null — для
+   * прочих типов документов.
+   */
+  recipeUid: text("recipe_uid"),
   /** Момент закрепления (ISO UTC), единый для всех */
   uploadedAt: text("uploaded_at").notNull().default(nowIso),
 }, (t) => ({
