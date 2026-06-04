@@ -207,7 +207,6 @@ export default function Dashboard() {
   const [loading, setLoading]           = useState(false);
   const [loadError, setLoadError]       = useState('');
   const [uploading, setUploading]       = useState(false);
-  const [showSynonyms, setShowSynonyms] = useState(false);
   const [showLipForm, setShowLipForm]   = useState(false);
 
   const [polotskFile, setPolotskFile]     = useState<File | null>(null);
@@ -219,7 +218,6 @@ export default function Dashboard() {
   const [kdStatus, setKdStatus]           = useState('');
   const [recipeStatus, setRecipeStatus]   = useState('');
   const [lipTab, setLipTab]               = useState<'zpp' | 'kd'>('kd');
-  const [showAnalogs, setShowAnalogs]     = useState(false);
   const [documents, setDocuments]         = useState<DocumentsMap | null>(null);
   const [openArchive, setOpenArchive]     = useState<DocType | null>(null);
 
@@ -1084,36 +1082,12 @@ export default function Dashboard() {
 
         {/* ─── НИЖНЯЯ ПАНЕЛЬ ─── */}
         <div className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 flex flex-wrap gap-3 items-center">
-          <span className="text-xs text-gray-400 font-semibold uppercase">⚙ Управление:</span>
-          <button
-            onClick={() => { setShowSynonyms(!showSynonyms); setShowAnalogs(false); }}
-            className="text-xs border border-gray-600 text-gray-300 px-3 py-1.5 rounded hover:bg-gray-800 transition"
-          >
-            🔗 База синонимов
-          </button>
-          <button
-            onClick={() => { setShowAnalogs(!showAnalogs); setShowSynonyms(false); }}
-            className="text-xs border border-purple-700 text-purple-300 px-3 py-1.5 rounded hover:bg-purple-900/30 transition"
-          >
-            🔄 Аналоги / замены
-          </button>
-          <span className="text-xs text-gray-600">|</span>
           <span className="text-xs text-gray-500">
             В пути: {dashStatus?.active_inbound_count ?? '—'} •
             На проверке: {dashStatus?.unresolved_review_count ?? '—'}
           </span>
           <span className="ml-auto text-xs text-green-600">● Google Sheets</span>
         </div>
-
-        {/* ─── ПАНЕЛЬ СИНОНИМОВ ─── */}
-        {showSynonyms && (
-          <SynonymsPanel rawMaterials={rawMaterials} onClose={() => setShowSynonyms(false)} onRefresh={load} />
-        )}
-
-        {/* ─── ПАНЕЛЬ АНАЛОГОВ ─── */}
-        {showAnalogs && (
-          <AnalogsPanel rawMaterials={rawMaterials} onClose={() => setShowAnalogs(false)} />
-        )}
       </div>
     </div>
   );
@@ -1299,152 +1273,4 @@ function UnmatchedRow({ item, rawMaterials, onConfirm, onDiscard }: {
   );
 }
 
-function AnalogsPanel({ rawMaterials, onClose }: {
-  rawMaterials: RawMaterial[];
-  onClose: () => void;
-}) {
-  const [analogs, setAnalogs] = useState<any[]>([]);
-  const [form, setForm] = useState({ raw_uid: '', analog_raw_uid: '', note: '' });
 
-  const reload = () => {
-    axios.get('/api/inventory/analogs').then(r => setAnalogs(r.data)).catch(() => {});
-  };
-
-  useEffect(() => { reload(); }, []);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (form.raw_uid === form.analog_raw_uid) return alert('Нельзя добавить сырьё как аналог самого себя');
-    await axios.post('/api/inventory/analogs', form);
-    setForm({ raw_uid: '', analog_raw_uid: '', note: '' });
-    reload();
-  };
-
-  const handleDelete = async (id: string) => {
-    await axios.delete(`/api/inventory/analogs/${id}`);
-    setAnalogs(analogs.filter(a => a.id !== id));
-  };
-
-  return (
-    <section className="bg-gray-900 border border-purple-800 rounded-lg p-4">
-      <div className="flex justify-between items-center mb-3">
-        <h2 className="text-xs font-semibold text-purple-300 uppercase tracking-wider">🔄 Аналоги / замены сырья</h2>
-        <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-xs">✕ Закрыть</button>
-      </div>
-      <p className="text-xs text-gray-500 mb-3">
-        Укажите, какое сырьё можно использовать как замену. Используется при расчёте дефицита.
-      </p>
-      <form onSubmit={handleAdd} className="flex gap-2 mb-3 flex-wrap">
-        <select
-          value={form.raw_uid}
-          onChange={e => setForm({ ...form, raw_uid: e.target.value })}
-          className="bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 flex-1 min-w-32"
-          required
-        >
-          <option value="">Основное сырьё...</option>
-          {rawMaterials.map(rm => <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>)}
-        </select>
-        <span className="text-gray-500 self-center text-xs">→ заменяет</span>
-        <select
-          value={form.analog_raw_uid}
-          onChange={e => setForm({ ...form, analog_raw_uid: e.target.value })}
-          className="bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 flex-1 min-w-32"
-          required
-        >
-          <option value="">Аналог (замена)...</option>
-          {rawMaterials.map(rm => <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>)}
-        </select>
-        <input
-          value={form.note}
-          onChange={e => setForm({ ...form, note: e.target.value })}
-          placeholder="Примечание (необязательно)"
-          className="bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 flex-1 min-w-28"
-        />
-        <button type="submit" className="bg-purple-800 hover:bg-purple-700 text-white text-xs px-3 py-1.5 rounded transition">
-          + Добавить
-        </button>
-      </form>
-      <div className="max-h-56 overflow-y-auto space-y-1">
-        {analogs.map(a => (
-          <div key={a.id} className="flex items-center gap-2 text-xs text-gray-300 bg-gray-800 rounded px-3 py-2">
-            <span className="font-medium text-white truncate max-w-40">{a.name}</span>
-            <span className="text-purple-400 shrink-0">→</span>
-            <span className="text-gray-200 truncate flex-1">{a.analog_name}</span>
-            {a.note && <span className="text-gray-500 text-xs italic shrink-0">{a.note}</span>}
-            <button onClick={() => handleDelete(a.id)} className="text-red-500 hover:text-red-400 shrink-0">✕</button>
-          </div>
-        ))}
-        {analogs.length === 0 && <p className="text-center text-gray-600 py-3">Аналоги не заданы</p>}
-      </div>
-    </section>
-  );
-}
-
-function SynonymsPanel({ rawMaterials, onClose, onRefresh }: {
-  rawMaterials: RawMaterial[];
-  onClose: () => void;
-  onRefresh: () => void;
-}) {
-  const [synonyms, setSynonyms] = useState<any[]>([]);
-  const [form, setForm] = useState({ raw_uid: '', synonym: '' });
-
-  useEffect(() => {
-    axios.get('/api/synonyms').then(r => setSynonyms(r.data)).catch(() => {});
-  }, []);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await axios.post('/api/synonyms', { raw_uid: form.raw_uid, synonym: form.synonym });
-    setForm({ raw_uid: '', synonym: '' });
-    const r = await axios.get('/api/synonyms');
-    setSynonyms(r.data);
-    onRefresh();
-  };
-
-  const handleDelete = async (id: string) => {
-    await axios.delete(`/api/synonyms/${id}`);
-    setSynonyms(synonyms.filter(s => s.id !== id));
-  };
-
-  return (
-    <section className="bg-gray-900 border border-gray-700 rounded-lg p-4">
-      <div className="flex justify-between items-center mb-3">
-        <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">🔗 База синонимов (маппинг)</h2>
-        <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-xs">✕ Закрыть</button>
-      </div>
-      <form onSubmit={handleAdd} className="flex gap-2 mb-3">
-        <select
-          value={form.raw_uid}
-          onChange={e => setForm({ ...form, raw_uid: e.target.value })}
-          className="bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 flex-1"
-          required
-        >
-          <option value="">Выбрать сырьё...</option>
-          {rawMaterials.map(rm => <option key={rm.raw_uid} value={rm.raw_uid}>{rm.full_name}</option>)}
-        </select>
-        <input
-          value={form.synonym}
-          onChange={e => setForm({ ...form, synonym: e.target.value })}
-          placeholder="Синоним (из файла)"
-          className="bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 flex-1"
-          required
-        />
-        <button type="submit" className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-1.5 rounded transition">
-          + Добавить
-        </button>
-      </form>
-      <div className="max-h-48 overflow-y-auto space-y-1">
-        {synonyms.map(s => (
-          <div key={s.id} className={`flex items-center gap-2 text-xs text-gray-300 rounded px-3 py-1.5 ${s.resolved === false ? 'bg-amber-900/30 border border-amber-700/40' : 'bg-gray-800'}`}>
-            <span className={`w-28 truncate ${s.resolved === false ? 'text-amber-500 italic' : 'text-gray-500'}`} title={s.resolved === false ? 'Синоним не привязан к позиции каталога' : s.name}>{s.name}</span>
-            <span className="text-gray-600">→</span>
-            <span className="font-mono text-gray-200 flex-1">{s.synonym}</span>
-            <span className="text-gray-600">[{s.source}]</span>
-            <button onClick={() => handleDelete(s.id)} className="text-red-500 hover:text-red-400">✕</button>
-          </div>
-        ))}
-        {synonyms.length === 0 && <p className="text-center text-gray-600 py-2">Синонимов нет</p>}
-      </div>
-    </section>
-  );
-}

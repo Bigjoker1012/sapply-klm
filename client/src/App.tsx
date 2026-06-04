@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import Dashboard from './pages/Dashboard';
 import Excluded from './pages/Excluded';
+import Synonyms from './pages/Synonyms';
+import Analogs from './pages/Analogs';
 
-type Tab = 'home' | 'excluded';
+type Tab = 'home' | 'excluded' | 'synonyms' | 'analogs';
 
 function App() {
   const [tab, setTab] = useState<Tab>('home');
@@ -14,6 +16,8 @@ function App() {
         : 'border-transparent text-gray-400 hover:text-gray-200'
     }`;
 
+  const goHome = () => setTab('home');
+
   return (
     <div className="min-h-screen bg-gray-950">
       {/* ─── ВКЛАДКИ ─── */}
@@ -21,12 +25,21 @@ function App() {
         <button className={tabCls(tab === 'home')} onClick={() => setTab('home')}>
           Главная
         </button>
+        <button className={tabCls(tab === 'synonyms')} onClick={() => setTab('synonyms')}>
+          База синонимов
+        </button>
+        <button className={tabCls(tab === 'analogs')} onClick={() => setTab('analogs')}>
+          Аналоги / замены
+        </button>
         <button className={tabCls(tab === 'excluded')} onClick={() => setTab('excluded')}>
           Исключённые
         </button>
       </nav>
 
-      {tab === 'home' ? <Dashboard /> : <Excluded onBack={() => setTab('home')} />}
+      {tab === 'home' && <Dashboard />}
+      {tab === 'synonyms' && <Synonyms onBack={goHome} />}
+      {tab === 'analogs' && <Analogs onBack={goHome} />}
+      {tab === 'excluded' && <Excluded onBack={goHome} />}
     </div>
   );
 }
