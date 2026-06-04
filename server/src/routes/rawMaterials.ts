@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { getAllRawMaterials, writeRange, readRange, deleteRawMaterial } from "../services/sheetsService";
+import { getAllRawMaterials, writeRange, readRange, deleteRawMaterial, mergeRawMaterials } from "../services/sheetsService";
 
 const router = Router();
 
@@ -37,6 +37,23 @@ router.post("/", async (req: Request, res: Response) => {
     res.json({ raw_uid: uid, full_name: name, message: "Сырьё добавлено" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Слияние двух позиций каталога: sourceUid сливается в targetUid. Все остатки,
+ * потребности и синонимы source перепривязываются на target, прежнее название
+ * source становится синонимом, source удаляется. full_name/short_name —
+ * опциональное переименование target (например, общее короткое название).
+ */
+router.post("/merge", async (req: Request, res: Response) => {
+  const { sourceUid, targetUid, full_name, short_name } = req.body;
+  try {
+    const rename = (full_name || short_name) ? { full_name, short_name } : undefined;
+    const counts = await mergeRawMaterials(sourceUid, targetUid, rename);
+    res.json({ ok: true, ...counts });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
   }
 });
 

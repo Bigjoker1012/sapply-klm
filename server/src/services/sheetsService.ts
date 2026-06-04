@@ -183,6 +183,115 @@ export async function deleteRawMaterial(uid: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Сливает позицию `sourceUid` в `targetUid` (и опционально переименовывает target).
+ *
+ * Перепривязывает код позиции source→target во ВСЕХ листах данных (PlantStock,
+ * LipStock, LipBatches, Inbound, Need) и в синонимах (оба формата листа Aliases),
+ * сохраняя историю — меняется только код в строке, сами данные/даты не трогаем.
+ * Прежнее название source добавляется синонимом к target, чтобы оно и дальше
+ * распознавалось при загрузках. Source удаляется из каталога Syryo.
+ *
+ * Возвращает счётчики затронутых строк по каждому листу.
+ */
+export async function mergeRawMaterials(
+  sourceUid: string,
+  targetUid: string,
+  rename?: { full_name?: string; short_name?: string },
+): Promise<{ plant: number; lip: number; lipBatches: number; inbound: number; need: number; aliases: number }> {
+  if (!sourceUid || !targetUid || sourceUid === targetUid) {
+    throw new Error("Нужны два разных кода: source и target");
+  }
+
+  const syryo = await readRange("Syryo", "A2:H1000");
+  let sourceRowIdx = -1, targetRowIdx = -1;
+  for (let i = 0; i < syryo.length; i++) {
+    if (syryo[i][0] === sourceUid) sourceRowIdx = i;
+    if (syryo[i][0] === targetUid) targetRowIdx = i;
+  }
+  if (sourceRowIdx < 0) throw new Error(`Позиция ${sourceUid} не найдена в каталоге`);
+  if (targetRowIdx < 0) throw new Error(`Позиция ${targetUid} не найдена в каталоге`);
+
+  const sourceRow = syryo[sourceRowIdx];
+  const targetRow = syryo[targetRowIdx];
+  const sourceName = String(sourceRow[1] || "");
+
+  // 1) Заготавливаем новую строку target (переименование + суммирование расхода
+  // обеих позиций). САМУ ЗАПИСЬ делаем последним шагом — после удаления source,
+  // чтобы повторный запуск после частичного сбоя не удваивал avg (target меняется
+  // только когда source уже гарантированно удалён, см. шаг 6).
+  const mergedUsage = parseNum(targetRow[4]) + parseNum(sourceRow[4]);
+  const newTargetRow = [
+    targetUid,
+    rename?.full_name ?? targetRow[1],
+    rename?.short_name ?? targetRow[2],
+    targetRow[3] || "кг",
+    mergedUsage,
+    targetRow[5] ?? 0.5,
+    targetRow[6] ?? 30,
+    targetRow[7] ?? "TRUE",
+  ];
+
+  // 2) Перепривязка кода во всех листах остатков/потребности (точечно по ячейке).
+  // Ошибки чтения НЕ глушим: эти листы всегда существуют (ensureSheets), поэтому
+  // сбой чтения — это реальный transient-сбой, и слияние должно прерваться громко,
+  // а не вернуть «0 перенесено» с молчаливо неперепривязанным остатком source.
+  const rekey = async (sheet: string, range: string, colIdx: number, colLetter: string): Promise<number> => {
+    const rows = await readRange(sheet, range);
+    let changed = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][colIdx] || "") === sourceUid) {
+        await writeRange(sheet, `${colLetter}${i + 2}:${colLetter}${i + 2}`, [[targetUid]]);
+        changed++;
+      }
+    }
+    return changed;
+  };
+
+  const plant = await rekey("PlantStock", "A2:G5000", 1, "B");
+  const lip = await rekey("LipStock", "A2:I5000", 1, "B");
+  const lipBatches = await rekey("LipBatches", "A2:G5000", 1, "B");
+  const inbound = await rekey("Inbound", "A2:H5000", 1, "B");
+  const need = await rekey("Need", "A2:H5000", 2, "C");
+
+  // 3) Перепривязка синонимов source→target (оба формата строки Aliases).
+  // Лист Aliases в этом приложении никогда не бывает пустым — пустой ответ
+  // означает временный сбой чтения Google. Прерываемся «громко», чтобы не
+  // получить молчаливое частичное слияние (синонимы/удаление не применятся).
+  const aliasRows = await readRange("Aliases", "A2:D5000");
+  if (!aliasRows.length) {
+    throw new Error("Лист Aliases вернулся пустым (временный сбой чтения) — слияние прервано, повторите");
+  }
+  let aliases = 0;
+  for (let i = 0; i < aliasRows.length; i++) {
+    const a = String(aliasRows[i][0] || "");
+    const b = String(aliasRows[i][1] || "");
+    if (a === sourceUid) {
+      await writeRange("Aliases", `A${i + 2}:A${i + 2}`, [[targetUid]]);
+      aliases++;
+    } else if (a.startsWith("AL_") && b === sourceUid) {
+      await writeRange("Aliases", `B${i + 2}:B${i + 2}`, [[targetUid]]);
+      aliases++;
+    }
+  }
+
+  // 4) Прежнее название source — синонимом к target (addAlias дедуплицирует сам).
+  if (sourceName) await addAlias(targetUid, sourceName, "merge");
+
+  // 5) Удаляем source из каталога. Если строка вдруг не нашлась (временный сбой
+  // чтения Syryo) — прерываемся «громко», чтобы source не остался в каталоге молча.
+  const deleted = await deleteRawMaterial(sourceUid);
+  if (!deleted) {
+    throw new Error(`Не удалось удалить ${sourceUid} из каталога (временный сбой) — повторите слияние`);
+  }
+
+  // 6) Запись переименования/суммы расхода target — ПОСЛЕДНИМ шагом (см. шаг 1).
+  await writeRange("Syryo", `A${targetRowIdx + 2}:H${targetRowIdx + 2}`, [newTargetRow]);
+
+  invalidateCache();
+  return { plant, lip, lipBatches, inbound, need, aliases };
+}
+
 export interface ParsedAlias {
   /** col A исходной строки (AL_xxx или код) — используется DELETE-роутом. */
   id: string;
