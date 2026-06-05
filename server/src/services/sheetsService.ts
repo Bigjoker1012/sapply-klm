@@ -99,6 +99,18 @@ export async function readRange(sheet: string, range: string): Promise<any[][]> 
   const cached = cacheGet<any[][]>(cacheKey);
   if (cached) return cached;
   const d = await sheetGet(`/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}`);
+  // Не глушить ошибки чтения. Прокси-путь (ReplitConnectors) возвращает тело
+  // ответа как есть: при 429/401/5xx это {error:{...}} БЕЗ поля values. Если
+  // молча отдать [], вызывающий код (matchBatch и др.) примет это за «пустой
+  // лист» и выдаст уверенно-неверный результат («0 строк распознано»), а пустой
+  // ответ ещё и закэшируется на CACHE_TTL — один сбой отравляет все чтения
+  // диапазона на 30 c. Поэтому при ошибке бросаем и НЕ кэшируем.
+  if (d && d.error) {
+    const e = d.error;
+    throw new Error(
+      `Sheets readRange ${fullRange} failed: ${e.code ?? ""} ${e.status ?? ""} ${e.message ?? JSON.stringify(e)}`.trim()
+    );
+  }
   const result = d.values || [];
   cacheSet(cacheKey, result);
   return result;
@@ -499,6 +511,15 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
     getAllRawMaterials(),
     readRange("Aliases", "A2:D5000"),
   ]);
+
+  // Каталог (Syryo) — инвариант: он всегда непустой. Пустой здесь означает
+  // сбой чтения Sheets, а не «нет сырья». Без этой проверки сопоставление вернёт
+  // все null и рецепт молча сохранится с «0 строк распознано». Бросаем, чтобы
+  // загрузка упала явно (клиент покажет ошибку, можно повторить), а не записала
+  // заведомо неверный результат.
+  if (!materials.length) {
+    throw new Error("matchBatch: каталог сырья (Syryo) пуст — вероятен сбой чтения Google Sheets");
+  }
 
   // Build lookup structures
   const byFullName  = new Map(materials.map(m => [m.full_name.toLowerCase().trim(), m.raw_uid]));
