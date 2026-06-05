@@ -201,7 +201,9 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    // Логируем полную ошибку (в проде catch раньше молчал — причина была не видна).
+    console.error("[upload/recipe] разбор рецепта упал:", err?.stack || err);
+    res.status(500).json({ error: err?.message || "Ошибка разбора рецепта" });
   }
 });
 

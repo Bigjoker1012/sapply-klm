@@ -184,8 +184,8 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
     const data = await pdfParse(buffer);
     const fromText = parseRecipeFromText(data.text);
     if (fromText && fromText.rows.length > 0) return fromText;
-  } catch {
-    // Текстового слоя нет/повреждён — уходим ниже (vision → OCR).
+  } catch (e) {
+    console.warn("[recipe] текстовый слой недоступен, пробую vision:", (e as Error)?.message);
   }
 
   // 2) Нет текстового слоя (текст вшит кривыми, частый случай 1С-премиксов):
@@ -194,8 +194,10 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
   //    (нет ключа OpenAI, ошибка сети, пустой результат) → tesseract-фолбэк.
   try {
     const pngs = await renderPdfToPngs(buffer, 2);
+    console.log(`[recipe] vision: отрендерено страниц=${pngs.length}, ключ OpenAI=${process.env.OPENAI_API_KEY ? "есть" : "НЕТ"}`);
     if (pngs.length) {
       const ai = await parseRecipeWithVision(pngs);
+      console.log(`[recipe] vision: строк распознано=${ai?.rows.length ?? 0}`);
       if (ai && ai.rows.length > 0) {
         return {
           name: ai.name,
@@ -210,8 +212,8 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
         };
       }
     }
-  } catch {
-    // Vision недоступен/ошибся — уходим в OCR-фолбэк ниже.
+  } catch (e) {
+    console.error("[recipe] vision-разбор не удался, пробую OCR:", (e as Error)?.message || e);
   }
 
   // 3) Сканы / запасной путь: рендер страницы в изображение + tesseract.
