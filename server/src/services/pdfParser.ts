@@ -1,10 +1,11 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { writeFile, unlink } from 'fs/promises';
+import { writeFile, readFile, unlink, mkdtemp, readdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import pdfParse from 'pdf-parse';
+import { parseRecipeWithVision } from './aiMatcher';
 
 const execFileAsync = promisify(execFile);
 
@@ -145,6 +146,38 @@ function resolveOcrScript(): string {
 
 const OCR_SCRIPT = resolveOcrScript();
 
+/**
+ * Рендер первых страниц PDF в PNG (poppler pdftoppm) и возврат base64.
+ * Нужно для vision-парсинга PDF без текстового слоя.
+ */
+async function renderPdfToPngs(buffer: Buffer, maxPages = 2): Promise<string[]> {
+  // Уникальная директория на запрос (mkdtemp), чтобы исключить коллизии имён
+  // при параллельных загрузках и гарантированно удалить ВСЕ артефакты рендера.
+  const dir = await mkdtemp(join(tmpdir(), 'klm_recipe_'));
+  const pdfPath = join(dir, 'in.pdf');
+  await writeFile(pdfPath, buffer);
+  try {
+    await execFileAsync(
+      'pdftoppm',
+      ['-png', '-r', '200', '-f', '1', '-l', String(maxPages), pdfPath, join(dir, 'page')],
+      { timeout: 60_000, maxBuffer: 32 * 1024 * 1024 }
+    );
+    // Читаем все сгенерированные PNG по содержимому каталога (имена нумеруются
+    // по-разному в зависимости от числа страниц), в стабильном порядке.
+    const files = (await readdir(dir))
+      .filter(f => f.startsWith('page') && f.endsWith('.png'))
+      .sort();
+    const pngs: string[] = [];
+    for (const f of files) {
+      const b = await readFile(join(dir, f));
+      pngs.push(b.toString('base64'));
+    }
+    return pngs;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
   // 1) Цифровые PDF: парсим текстовый слой напрямую (быстро, без OCR/MuPDF).
   try {
@@ -152,10 +185,36 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
     const fromText = parseRecipeFromText(data.text);
     if (fromText && fromText.rows.length > 0) return fromText;
   } catch {
-    // Текстового слоя нет/повреждён — уходим в OCR-фолбэк ниже.
+    // Текстового слоя нет/повреждён — уходим ниже (vision → OCR).
   }
 
-  // 2) Сканы: рендер страницы в изображение + tesseract.
+  // 2) Нет текстового слоя (текст вшит кривыми, частый случай 1С-премиксов):
+  //    рендерим страницу в картинку и читаем таблицу vision-моделью. Это
+  //    надёжнее tesseract на плотной многоколоночной таблице. Любой сбой
+  //    (нет ключа OpenAI, ошибка сети, пустой результат) → tesseract-фолбэк.
+  try {
+    const pngs = await renderPdfToPngs(buffer, 2);
+    if (pngs.length) {
+      const ai = await parseRecipeWithVision(pngs);
+      if (ai && ai.rows.length > 0) {
+        return {
+          name: ai.name,
+          code: ai.code,
+          date: ai.date,
+          batchKg: ai.batchKg,
+          rows: ai.rows.map(r => ({
+            rawName: r.rawName,
+            percentage: r.percentage,
+            quantityPerTon: r.quantityPerTon,
+          })),
+        };
+      }
+    }
+  } catch {
+    // Vision недоступен/ошибся — уходим в OCR-фолбэк ниже.
+  }
+
+  // 3) Сканы / запасной путь: рендер страницы в изображение + tesseract.
   const tmpFile = join(tmpdir(), `klm_recipe_${Date.now()}.pdf`);
   try {
     await writeFile(tmpFile, buffer);

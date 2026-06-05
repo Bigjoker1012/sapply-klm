@@ -1,6 +1,13 @@
 import OpenAI from "openai";
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Ленивая инициализация: без ключа конструктор OpenAI бросает исключение,
+// что сломало бы фолбэк «нет ключа → OCR». Создаём клиент только при первом
+// реальном вызове, а вызывающий код предварительно проверяет наличие ключа.
+let _client: OpenAI | null = null;
+function getClient(): OpenAI {
+  if (!_client) _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _client;
+}
 
 export interface AiSuggestion {
   original_text: string;
@@ -43,7 +50,7 @@ ${catalog}
 
   const userPrompt = `Сопоставь следующие коммерческие названия со справочником:\n${itemsList}`;
 
-  const response = await client.chat.completions.create({
+  const response = await getClient().chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemPrompt },
@@ -82,4 +89,96 @@ ${catalog}
     confidence: s.confidence || "low",
     reason: s.reason || "",
   }));
+}
+
+// ─── Распознавание рецепта-картинки через vision-модель ──────────────────────
+
+export interface AiRecipeRow {
+  rawName: string;
+  percentage: number;
+  quantityPerTon: number;
+}
+
+export interface AiRecipe {
+  code: string;
+  name: string;
+  date: string;
+  batchKg: number;
+  rows: AiRecipeRow[];
+}
+
+/**
+ * Извлекает состав премикса из изображения(й) бланка «РЕЦЕПТ ПРЕМИКСА» (1С КХП)
+ * с помощью vision-модели. Нужно для PDF БЕЗ текстового слоя (текст вшит кривыми),
+ * где tesseract на плотной многоколоночной таблице ненадёжен.
+ *
+ * Возвращает null, если ключа нет, ответ не распарсился или строк не найдено —
+ * тогда вызывающий код уходит в tesseract-фолбэк.
+ */
+export async function parseRecipeWithVision(imagesB64: string[]): Promise<AiRecipe | null> {
+  if (!process.env.OPENAI_API_KEY || !imagesB64.length) return null;
+
+  const systemPrompt = `Ты извлекаешь состав премикса из изображения бланка «РЕЦЕПТ ПРЕМИКСА» Полоцкого комбината хлебопродуктов (выгрузка 1С).
+Слева — таблица «Состав рецепта» с колонками: Наименование | Активн. | % ввода | Норма ввода г/т | Расход сырья кг | Цена | Стоимость.
+Справа — блоки «Качество рецепта» и «Плановая калькуляция»: их ПОЛНОСТЬЮ игнорируй.
+
+Верни СТРОГО валидный JSON-объект вида:
+{"code":"...","name":"...","date":"ДД.ММ.ГГГГ","batchKg":число,"rows":[{"rawName":"...","percentage":число,"quantityPerTon":число}]}
+
+Правила:
+- code — код рецепта (например «Д-П60-3/Б20/ПЛЦ-164»).
+- name — текст после слова «Для» (например «ВЫСОКОПРОДУКТИВНЫХ КОРОВ, СТОЙЛОВЫЙ ПЕРИОД»).
+- date — значение «Дата печати».
+- batchKg — «Выработка» в тоннах × 1000 (1 т → 1000).
+- rows — КАЖДАЯ строка-компонент таблицы «Состав рецепта».
+    rawName — наименование РОВНО как напечатано, включая код-префикс (например «В1_ВИТАМИН А КЛМ (Апсавит А1000)»).
+    percentage — число из колонки «% ввода».
+    quantityPerTon — число из колонки «Расход сырья, кг».
+- НЕ включай строки-подытоги: «Витамины-итого», «Микроэлементы-итого», «ИТОГО», «ВСЕГО».
+- Десятичный разделитель — запятую — верни как точку (3,360 → 3.36), пробелы-разделители тысяч убери (14 474 → 14474).
+- Только JSON, без пояснений и текста вокруг.`;
+
+  const content: any[] = [
+    { type: "text", text: "Извлеки состав рецепта из изображения(й) бланка." },
+  ];
+  for (const b64 of imagesB64) {
+    content.push({ type: "image_url", image_url: { url: `data:image/png;base64,${b64}`, detail: "high" } });
+  }
+
+  const response = await getClient().chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content },
+    ],
+    temperature: 0,
+    response_format: { type: "json_object" },
+  });
+
+  const raw = response.choices[0]?.message?.content || "{}";
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  const rowsRaw = Array.isArray(parsed?.rows) ? parsed.rows : [];
+  const rows: AiRecipeRow[] = rowsRaw
+    .map((r: any) => ({
+      rawName: String(r.rawName || "").trim(),
+      percentage: Number(r.percentage) || 0,
+      quantityPerTon: Number(r.quantityPerTon) || 0,
+    }))
+    .filter((r: AiRecipeRow) => r.rawName.length >= 2 && (r.percentage > 0 || r.quantityPerTon > 0));
+
+  if (!rows.length) return null;
+
+  return {
+    code: String(parsed.code || "").trim(),
+    name: String(parsed.name || "").trim() || String(parsed.code || "Рецепт"),
+    date: String(parsed.date || "").trim() || new Date().toISOString().split("T")[0],
+    batchKg: Number(parsed.batchKg) || 1000,
+    rows,
+  };
 }
