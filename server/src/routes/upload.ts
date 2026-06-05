@@ -12,17 +12,39 @@ import { parsePolotskExcel, parseRecipeExcel, parseKdExcel } from "../services/e
 import { saveDocument } from "../services/documentArchive";
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
+// Лимит с запасом: при обходе WAF файл приходит в base64 (≈ +33% к размеру),
+// поэтому держим 45MB, чтобы фактический предел исходного файла оставался ~30MB.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 45 * 1024 * 1024 } });
+
+/**
+ * Эдж деплоя (WAF) блокирует HTTP 403 любую загрузку с сигнатурой «%PDF» в теле
+ * (срабатывает на сыром PDF, в т.ч. в multipart). В dev WAF нет, поэтому проблема
+ * видна только в проде. Обход: клиент кодирует файл в base64 и шлёт как текст
+ * (encoding=base64 + filename + mimetype в полях формы) — `%PDF` в потоке нет.
+ * Здесь декодируем обратно в оригинальный буфер. Если флага нет — берём файл как есть.
+ */
+function readUpload(req: Request): { buffer: Buffer; originalname: string; mimetype: string } {
+  const f = req.file!;
+  if (req.body?.encoding === "base64") {
+    return {
+      buffer: Buffer.from(f.buffer.toString("utf8"), "base64"),
+      originalname: req.body?.filename || f.originalname,
+      mimetype: req.body?.mimetype || f.mimetype,
+    };
+  }
+  return { buffer: f.buffer, originalname: f.originalname, mimetype: f.mimetype };
+}
 
 // ─── Загрузка Excel / PDF остатков Полоцка ────────────────────────────────────
 
 router.post("/polotsk", upload.single("file"), async (req: Request, res: Response) => {
   if (!req.file) return res.status(400).json({ error: "Файл не найден" });
   try {
-    const isPdf = req.file.mimetype === "application/pdf" || req.file.originalname.endsWith(".pdf");
+    const up = readUpload(req);
+    const isPdf = up.mimetype === "application/pdf" || up.originalname.endsWith(".pdf");
     const parsed = isPdf
-      ? await parsePolotskPdf(req.file.buffer)
-      : parsePolotskExcel(req.file.buffer);
+      ? await parsePolotskPdf(up.buffer)
+      : parsePolotskExcel(up.buffer);
 
     // 1. Match ALL names in one batch (2 API calls: Syryo + Aliases)
     const matchMap = await matchBatch(parsed.map(r => r.rawName));
@@ -36,11 +58,11 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
     for (const row of parsed) {
       const rawUid = matchMap.get(row.rawName);
       if (rawUid) {
-        stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source_file: req.file!.originalname });
+        stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source_file: up.originalname });
         newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "polotsk_file" });
         matched++;
       } else {
-        queueItems.push({ text: row.rawName, source_type: "polotsk", file_name: req.file!.originalname });
+        queueItems.push({ text: row.rawName, source_type: "polotsk", file_name: up.originalname });
         unmatched++;
       }
     }
@@ -52,7 +74,7 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
       queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
 
-    await saveDocument("polotsk", req.file);
+    await saveDocument("polotsk", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
 
     res.json({ ok: true, total: parsed.length, matched, unmatched, message: `Загружено: ${matched}, не распознано: ${unmatched}` });
   } catch (err: any) {
@@ -65,7 +87,8 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
 router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Response) => {
   if (!req.file) return res.status(400).json({ error: "Файл не найден" });
   try {
-    const parsed = parsePolotskExcel(req.file.buffer);
+    const up = readUpload(req);
+    const parsed = parsePolotskExcel(up.buffer);
 
     // 1. Match ALL names in one batch
     const matchMap = await matchBatch(parsed.map(r => r.rawName));
@@ -83,7 +106,7 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
         newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "lipkovskaya_file" });
         matched++;
       } else {
-        queueItems.push({ text: row.rawName, source_type: "lipkovskaya", file_name: req.file!.originalname });
+        queueItems.push({ text: row.rawName, source_type: "lipkovskaya", file_name: up.originalname });
         unmatched++;
       }
     }
@@ -95,7 +118,7 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
       queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
 
-    await saveDocument("lipkovskaya", req.file);
+    await saveDocument("lipkovskaya", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
 
     res.json({
       ok: true,
@@ -114,10 +137,11 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
 router.post("/recipe", upload.single("file"), async (req: Request, res: Response) => {
   if (!req.file) return res.status(400).json({ error: "Файл не найден" });
   try {
-    const isPdf = req.file.mimetype === "application/pdf" || req.file.originalname.endsWith(".pdf");
+    const up = readUpload(req);
+    const isPdf = up.mimetype === "application/pdf" || up.originalname.endsWith(".pdf");
     const parsed = isPdf
-      ? await parseRecipePdf(req.file.buffer)
-      : parseRecipeExcel(req.file.buffer);
+      ? await parseRecipePdf(up.buffer)
+      : parseRecipeExcel(up.buffer);
 
     // Норма сырья в рецепте всегда дана на 1 т. Выработка (объём заказа) указана
     // в самом рецепте (parsed.batchKg); req.body.batchQty — необязательное
@@ -144,7 +168,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       customer: "",
       period: new Date().toISOString().slice(0, 7),
       quarter: `${Math.ceil((new Date().getMonth() + 1) / 3)}_квартал`,
-      file_name: req.file.originalname,
+      file_name: up.originalname,
       base_batch_kg,
     });
 
@@ -183,7 +207,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
         if (consumption_kg > 0) needLines.push({ raw_uid: rawUid, net_qty: consumption_kg });
         matched++;
       } else {
-        queueItems.push({ text: row.rawName, source_type: "recipe", file_name: req.file!.originalname });
+        queueItems.push({ text: row.rawName, source_type: "recipe", file_name: up.originalname });
         unmatched++;
       }
     }
@@ -197,7 +221,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines);
 
-    await saveDocument("recipe", req.file, recipeUid);
+    await saveDocument("recipe", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer }, recipeUid);
 
     res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched });
   } catch (err: any) {
@@ -214,7 +238,8 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: Response) => {
   if (!req.file) return res.status(400).json({ error: "Файл не найден" });
   try {
-    const parsed = parseKdExcel(req.file.buffer);
+    const up = readUpload(req);
+    const parsed = parseKdExcel(up.buffer);
     if (!parsed.length) return res.status(400).json({ error: "Нет данных в файле (проверьте формат КД)" });
 
     // 1. Match ALL base names at once (2 API calls)
@@ -240,7 +265,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
         }
         matched++;
       } else {
-        queueItems.push({ text: row.baseName, source_type: "lipkovskaya_kd", file_name: req.file!.originalname });
+        queueItems.push({ text: row.baseName, source_type: "lipkovskaya_kd", file_name: up.originalname });
         unmatched++;
       }
     }
@@ -265,7 +290,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
       filteredQueue.length ? addToReviewQueueBatch(filteredQueue) : Promise.resolve(),
     ]);
 
-    await saveDocument("kd", req.file);
+    await saveDocument("kd", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
 
     res.json({
       ok: true,

@@ -3,6 +3,33 @@ import axios from 'axios';
 
 const API = '/api';
 
+// Эдж деплоя (WAF) блокирует HTTP 403 загрузку файлов с сигнатурой «%PDF» в теле.
+// Обход: кодируем файл в base64 и отправляем как текст (multipart), а сервер
+// декодирует обратно (см. readUpload в server/src/routes/upload.ts). Так `%PDF`
+// в потоке не появляется. Применяем ко всем загрузкам единообразно.
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = reader.result as string; // "data:<mime>;base64,XXXX"
+      resolve(res.includes(',') ? res.slice(res.indexOf(',') + 1) : res);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function buildUploadForm(file: File, extra?: Record<string, string>): Promise<FormData> {
+  const b64 = await fileToBase64(file);
+  const fd = new FormData();
+  fd.append('file', new Blob([b64], { type: 'text/plain' }), `${file.name}.b64.txt`);
+  fd.append('encoding', 'base64');
+  fd.append('filename', file.name);
+  fd.append('mimetype', file.type || 'application/octet-stream');
+  if (extra) for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+  return fd;
+}
+
 interface Decision {
   raw_uid: string;
   name: string;
@@ -288,8 +315,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
     setUploading(true);
     setPolotskStatus('Обработка...');
     try {
-      const fd = new FormData();
-      fd.append('file', polotskFile);
+      const fd = await buildUploadForm(polotskFile);
       const r = await axios.post(`${API}/upload/polotsk`, fd);
       setPolotskStatus(`✅ ${r.data.message}`);
       setPolotskFile(null);
@@ -306,8 +332,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
     setUploading(true);
     setLipStatus('Обработка...');
     try {
-      const fd = new FormData();
-      fd.append('file', lipFile);
+      const fd = await buildUploadForm(lipFile);
       const r = await axios.post(`${API}/upload/lipkovskaya`, fd);
       setLipStatus(`✅ ${r.data.message}`);
       setLipFile(null);
@@ -324,8 +349,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
     setUploading(true);
     setKdStatus('Разбор ведомости по партиям...');
     try {
-      const fd = new FormData();
-      fd.append('file', kdFile);
+      const fd = await buildUploadForm(kdFile);
       const r = await axios.post(`${API}/upload/lipkovskaya-kd`, fd);
       setKdStatus(`✅ ${r.data.message}`);
       setKdFile(null);
@@ -342,8 +366,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
     setUploading(true);
     setRecipeStatus('Обработка рецепта...');
     try {
-      const fd = new FormData();
-      fd.append('file', recipeFile);
+      const fd = await buildUploadForm(recipeFile);
       const r = await axios.post(`${API}/upload/recipe`, fd);
       setRecipeStatus(`✅ «${r.data.recipeName}» — ${r.data.matched} строк распознано`);
       setRecipeFile(null);
