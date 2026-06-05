@@ -212,7 +212,7 @@ export function parsePolotskExcel(buffer: Buffer): ParsedRow[] {
  * Ищет строки: наименование компонента | активность % | ввод % | г/т | кг на партию
  */
 export function parseRecipeExcel(buffer: Buffer): {
-  name: string; code: string; date: string; rows: RecipeRow[];
+  name: string; code: string; date: string; batchKg: number; rows: RecipeRow[];
 } {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -222,14 +222,24 @@ export function parseRecipeExcel(buffer: Buffer): {
   let recipeName = "";
   let recipeCode = "";
   let recipeDate = new Date().toISOString().split("T")[0];
+  let batchKg = 0; // выработка (объём заказа) из шапки рецепта, кг
 
-  for (let r = 0; r < Math.min(15, rows.length); r++) {
+  for (let r = 0; r < Math.min(20, rows.length); r++) {
     const line = rows[r].map((v: any) => String(v || "").trim()).join(" ").trim();
     if (!recipeName && line.length > 4 && !/^\d/.test(line)) recipeName = line.slice(0, 120);
     const codeMatch = line.match(/\b(Д-[А-ЯA-Z\d-]+|ПЛЦ[-\d]+|REC[-\d]+)/i);
     if (!recipeCode && codeMatch) recipeCode = codeMatch[1];
     const dateMatch = line.match(/(\d{2}[.\-\/]\d{2}[.\-\/]\d{2,4})/);
     if (dateMatch) recipeDate = dateMatch[1];
+    if (!batchKg) {
+      // «Выработка: N т» → кг. Норма сырья в рецепте дана на 1 т, выработка
+      // масштабирует потребность/списание (см. routes/upload.ts).
+      const bm = line.match(/Выработк[аи][:\s]*([\d.,\s]+?)\s*т/i);
+      if (bm) {
+        const t = parseFloat(bm[1].replace(/\s/g, "").replace(",", "."));
+        if (Number.isFinite(t) && t > 0) batchKg = t * 1000;
+      }
+    }
   }
 
   // Find header row
@@ -273,6 +283,7 @@ export function parseRecipeExcel(buffer: Buffer): {
     name: recipeName || "Рецепт",
     code: recipeCode,
     date: recipeDate,
+    batchKg: batchKg || 1000,
     rows: recipeRows,
   };
 }

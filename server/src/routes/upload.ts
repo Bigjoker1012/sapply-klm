@@ -119,7 +119,16 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       ? await parseRecipePdf(req.file.buffer)
       : parseRecipeExcel(req.file.buffer);
 
-    const base_batch_kg = parseFloat(req.body?.batchQty) || 1000;
+    // Норма сырья в рецепте всегда дана на 1 т. Выработка (объём заказа) указана
+    // в самом рецепте (parsed.batchKg); req.body.batchQty — необязательное
+    // переопределение. Потребность/списание = норма_на_1т × выработка.
+    const recipe_batch_kg = parsed.batchKg && parsed.batchKg > 0 ? parsed.batchKg : 1000;
+    // Override принимаем только как конечное положительное число, иначе берём
+    // выработку из самого рецепта (отрицательные/мусорные значения игнорируем).
+    const overrideKg = parseFloat(req.body?.batchQty);
+    const base_batch_kg = Number.isFinite(overrideKg) && overrideKg > 0 ? overrideKg : recipe_batch_kg;
+    const recipe_batch_t = recipe_batch_kg / 1000;
+    const batch_t = base_batch_kg / 1000;
 
     // 1. Match ALL recipe row names at once
     const matchMap = await matchBatch(parsed.rows.map(r => r.rawName));
@@ -131,7 +140,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       premix_name: parsed.name,
       date: parsed.date,
       concentration: 0,
-      batch_t: base_batch_kg / 1000,
+      batch_t,
       customer: "",
       period: new Date().toISOString().slice(0, 7),
       quarter: `${Math.ceil((new Date().getMonth() + 1) / 3)}_квартал`,
@@ -148,18 +157,23 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     for (const row of parsed.rows) {
       const rawUid = matchMap.get(row.rawName) ?? null;
-      const consumption_kg = row.quantityPerTon > 0
-        ? (row.quantityPerTon / 1000) * base_batch_kg
-        : row.percentage > 0
-        ? (row.percentage / 100) * base_batch_kg
+      // Норма на 1 т (кг/т). «% ввода» не зависит от выработки → приоритетный
+      // источник; иначе нормализуем «Расход сырья, кг» из документа делением на
+      // выработку самого рецепта (расход в документе посчитан на эту выработку).
+      const dose_kg_per_t = row.percentage > 0
+        ? (row.percentage / 100) * 1000
+        : row.quantityPerTon > 0
+        ? row.quantityPerTon / recipe_batch_t
         : 0;
+      // Списание/потребность под фактическую выработку заказа.
+      const consumption_kg = dose_kg_per_t * batch_t;
 
       lines.push({
         raw_uid: rawUid,
         name_from_recipe: row.rawName,
         activity: "",
         input_pct: row.percentage,
-        norm_g_per_t: row.quantityPerTon,
+        norm_g_per_t: Math.round(dose_kg_per_t * 1000),
         consumption_kg,
         match_status: rawUid ? "matched" : "unmatched",
       });
