@@ -368,7 +368,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
     try {
       const fd = await buildUploadForm(recipeFile);
       const r = await axios.post(`${API}/upload/recipe`, fd);
-      setRecipeStatus(`✅ «${r.data.recipeName}» — ${r.data.matched} строк распознано`);
+      setRecipeStatus(`✅ «${r.data.recipeName}» — ${r.data.matched} строк распознано` + (r.data.plant > 0 ? `, ${r.data.plant} позиций завода пропущено (цена за 1 кг проставлена)` : ''));
       setRecipeFile(null);
       load();
     } catch (e: any) {

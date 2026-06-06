@@ -18,6 +18,7 @@ export interface RecipeRow {
   rawName: string;
   percentage: number;
   quantityPerTon: number;
+  pricePerKg: number;
 }
 
 export interface ParsedRecipe {
@@ -107,7 +108,8 @@ function parseRecipeFromText(text: string): ParsedRecipe | null {
     const percentage = parseRuNum(m[2]);
     const quantityPerTon = parseRuNum(m[3]);
     if (percentage <= 0) continue;
-    rows.push({ rawName, percentage, quantityPerTon });
+    // Текстовый слой не даёт надёжно колонку цены — считаем позицию нашей (0).
+    rows.push({ rawName, percentage, quantityPerTon, pricePerKg: 0 });
   }
 
   if (rows.length === 0) return null;
@@ -208,6 +210,7 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
             rawName: r.rawName,
             percentage: r.percentage,
             quantityPerTon: r.quantityPerTon,
+            pricePerKg: r.pricePerKg,
           })),
         };
       }
@@ -241,6 +244,7 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
       rawName: r.rawName,
       percentage: Number(r.percentage) || 0,
       quantityPerTon: Number(r.quantityKg) || 0,
+      pricePerKg: Number(r.pricePerKg) || 0,
     }));
 
     return {

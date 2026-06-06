@@ -36,6 +36,7 @@ export interface RecipeRow {
   rawName: string;
   percentage: number;
   quantityPerTon: number;
+  pricePerKg: number;
 }
 
 /**
@@ -256,13 +257,20 @@ export function parseRecipeExcel(buffer: Buffer): {
     ? rows[headerRow].map((v: any) => String(v || "").toLowerCase())
     : [];
 
+  // Колонку «Цена» ищем ПЕРВОЙ: заголовок «Цена за 1 кг» содержит «кг», поэтому
+  // её нужно исключить из поиска колонки расхода, иначе расход определится неверно.
+  const priceIdx = headers.findIndex((h: string) => h.includes("цена"));
   let nameIdx = headers.findIndex((h: string) => h.includes("наим") || h.includes("компон") || h.includes("сырь"));
   let pctIdx  = headers.findIndex((h: string) => h.includes("%") || h.includes("ввод") || h.includes("проц"));
-  let qtyIdx  = headers.findIndex((h: string) => h.includes("г/т") || h.includes("норм") || h.includes("расход") || h.includes("кг"));
+  let qtyIdx  = headers.findIndex((h: string, i: number) =>
+    i !== priceIdx && (h.includes("г/т") || h.includes("норм") || h.includes("расход")));
+  if (qtyIdx < 0) qtyIdx = headers.findIndex((h: string, i: number) =>
+    i !== priceIdx && i !== nameIdx && i !== pctIdx && h.includes("кг"));
   if (nameIdx < 0) nameIdx = 1;
   if (pctIdx  < 0) pctIdx  = 3;
   if (qtyIdx  < 0) qtyIdx  = 4;
 
+  const num = (v: any) => parseFloat(String(v ?? "").replace(/\s/g, "").replace(",", ".")) || 0;
   const startRow = headerRow >= 0 ? headerRow + 1 : 8;
   const recipeRows: RecipeRow[] = [];
 
@@ -272,11 +280,13 @@ export function parseRecipeExcel(buffer: Buffer): {
     if (!name || name.length < 2) continue;
     if (/^итого|^всего|^total/i.test(name)) continue;
 
-    const pct = parseFloat(String(row[pctIdx] || "").replace(",", ".")) || 0;
-    const qty = parseFloat(String(row[qtyIdx] || "").replace(",", ".")) || 0;
+    const pct = num(row[pctIdx]);
+    const qty = num(row[qtyIdx]);
     if (!pct && !qty) continue;
+    // Цена за 1 кг: 0/пусто → наша позиция (берём в закупку); >0 → позиция завода.
+    const pricePerKg = priceIdx >= 0 ? num(row[priceIdx]) : 0;
 
-    recipeRows.push({ rawName: name, percentage: pct, quantityPerTon: qty });
+    recipeRows.push({ rawName: name, percentage: pct, quantityPerTon: qty, pricePerKg });
   }
 
   return {

@@ -97,6 +97,7 @@ export interface AiRecipeRow {
   rawName: string;
   percentage: number;
   quantityPerTon: number;
+  pricePerKg: number;
 }
 
 export interface AiRecipe {
@@ -123,7 +124,7 @@ export async function parseRecipeWithVision(imagesB64: string[]): Promise<AiReci
 Справа — блоки «Качество рецепта» и «Плановая калькуляция»: их ПОЛНОСТЬЮ игнорируй.
 
 Верни СТРОГО валидный JSON-объект вида:
-{"code":"...","name":"...","date":"ДД.ММ.ГГГГ","batchKg":число,"rows":[{"rawName":"...","percentage":число,"quantityPerTon":число}]}
+{"code":"...","name":"...","date":"ДД.ММ.ГГГГ","batchKg":число,"rows":[{"rawName":"...","percentage":число,"quantityPerTon":число,"pricePerKg":число}]}
 
 Правила:
 - code — код рецепта (например «Д-П60-3/Б20/ПЛЦ-164»).
@@ -134,6 +135,7 @@ export async function parseRecipeWithVision(imagesB64: string[]): Promise<AiReci
     rawName — наименование РОВНО как напечатано, включая код-префикс (например «В1_ВИТАМИН А КЛМ (Апсавит А1000)»).
     percentage — число из колонки «% ввода».
     quantityPerTon — число из колонки «Расход сырья, кг».
+    pricePerKg — число из колонки «Цена» (цена за 1 кг). Если ячейка пустая или равна 0 — верни 0.
 - НЕ включай строки-подытоги: «Витамины-итого», «Микроэлементы-итого», «ИТОГО», «ВСЕГО».
 - Десятичный разделитель — запятую — верни как точку (3,360 → 3.36), пробелы-разделители тысяч убери (14 474 → 14474).
 - Только JSON, без пояснений и текста вокруг.`;
@@ -169,6 +171,7 @@ export async function parseRecipeWithVision(imagesB64: string[]): Promise<AiReci
       rawName: String(r.rawName || "").trim(),
       percentage: Number(r.percentage) || 0,
       quantityPerTon: Number(r.quantityPerTon) || 0,
+      pricePerKg: Number(r.pricePerKg) || 0,
     }))
     .filter((r: AiRecipeRow) => r.rawName.length >= 2 && (r.percentage > 0 || r.quantityPerTon > 0));
 

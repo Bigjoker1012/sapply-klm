@@ -154,8 +154,12 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     const recipe_batch_t = recipe_batch_kg / 1000;
     const batch_t = base_batch_kg / 1000;
 
-    // 1. Match ALL recipe row names at once
-    const matchMap = await matchBatch(parsed.rows.map(r => r.rawName));
+    // 1. Разделяем позиции по «Цене за 1 кг»: наши (цена 0/пусто) берём в разборку
+    //    и закупку; позиции с проставленной ценой — сырьё завода, в потребность не
+    //    включаем (matchBatch гоняем только по нашим строкам).
+    const matchMap = await matchBatch(
+      parsed.rows.filter(r => !((r as any).pricePerKg > 0)).map(r => r.rawName)
+    );
 
     // 2. Write recipe header
     const recipeUid = await writeRecipe({
@@ -174,13 +178,15 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     let matched = 0;
     let unmatched = 0;
+    let plant = 0;
     const lines: Parameters<typeof writeRecipeLines>[1] = [];
     const needLines: { raw_uid: string; net_qty: number }[] = [];
     const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
     const queueItems: { text: string; source_type: string; file_name: string }[] = [];
 
     for (const row of parsed.rows) {
-      const rawUid = matchMap.get(row.rawName) ?? null;
+      const isPlant = (row as any).pricePerKg > 0;
+      const rawUid = isPlant ? null : (matchMap.get(row.rawName) ?? null);
       // Норма на 1 т (кг/т). «% ввода» не зависит от выработки → приоритетный
       // источник; иначе нормализуем «Расход сырья, кг» из документа делением на
       // выработку самого рецепта (расход в документе посчитан на эту выработку).
@@ -199,10 +205,14 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
         input_pct: row.percentage,
         norm_g_per_t: Math.round(dose_kg_per_t * 1000),
         consumption_kg,
-        match_status: rawUid ? "matched" : "unmatched",
+        match_status: isPlant ? "plant" : rawUid ? "matched" : "unmatched",
       });
 
-      if (rawUid) {
+      if (isPlant) {
+        // Позиция завода (есть цена за 1 кг): не матчим, не закупаем, в очередь
+        // распознавания не добавляем.
+        plant++;
+      } else if (rawUid) {
         newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "recipe" });
         if (consumption_kg > 0) needLines.push({ raw_uid: rawUid, net_qty: consumption_kg });
         matched++;
@@ -223,7 +233,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
     await saveDocument("recipe", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer }, recipeUid);
 
-    res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched });
+    res.json({ ok: true, recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched, plant });
   } catch (err: any) {
     // Логируем полную ошибку (в проде catch раньше молчал — причина была не видна).
     console.error("[upload/recipe] разбор рецепта упал:", err?.stack || err);

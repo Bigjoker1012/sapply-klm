@@ -11,3 +11,4 @@
 - [Ошибки чтения Sheets отравляют кэш](sheets-read-error-poisons-cache.md) — readRange на ошибке API молча кэшировал [] на 30c → matchBatch видел пустой каталог → «0 строк распознано» пачками; бросать на {error}, не кэшировать; matchBatch требует непустой Syryo.
 - [Прод-WAF режет PDF (403)](prod-waf-blocks-pdf.md) — эдж деплоя 403 на «%PDF» в теле (только прод, не dev); обход — клиент шлёт base64-текст, сервер декодирует (readUpload). Тест-загрузки чистить (Sheets общие).
 - [Resolve unmatched recipe lines](resolve-unmatched-recipe-lines.md) — recipe parse is NOT live; adding an alias only fixes FUTURE uploads. To fix a current recipe: patch RecipeLines (col C uid, col L matched) + append Need; confirm endpoint touches neither.
+- [Recipe price-per-kg rule](recipe-price-per-kg-rule.md) — price=0 = our material (goes to procurement); price>0 = plant material, excluded. Excel: detect «цена» col FIRST, «Цена за 1 кг» contains «кг» and collides with qty detection.
