@@ -1049,19 +1049,37 @@ export async function deleteNeedByRecipe(recipe_uid: string): Promise<number> {
  * CANCELLED не вычитается (возврат сырья).
  */
 export const RECIPE_STATUS = {
+  PLAN: "план",
   IN_WORK: "в работе",
+  ARCHIVED: "архив",
   CANCELLED: "отменён",
   DELETED: "удалён",
 } as const;
 
 /**
  * Статусы, при которых сырьё рецепта считается списанным со склада (вычитается
- * из живых остатков и из доступного при проверке достаточности). «активен» —
- * легаси-статус старых рецептов, трактуем как «в работе».
+ * из живых остатков). По новой логике «План→Факт» сырьё резервируется уже на
+ * этапе плана и не возвращается при выработке (архиве) — со склада возвращает
+ * только ОТМЕНА. Поэтому списанными считаются ВСЕ статусы, кроме «отменён».
+ * Легаси: «активен» = старый «в работе», «удалён» = старый архив.
  */
 export const STOCK_CONSUMING_STATUSES = new Set<string>([
-  RECIPE_STATUS.IN_WORK, RECIPE_STATUS.DELETED, "активен",
+  RECIPE_STATUS.PLAN, RECIPE_STATUS.IN_WORK, RECIPE_STATUS.ARCHIVED,
+  RECIPE_STATUS.DELETED, "активен",
 ]);
+
+/**
+ * Сигнал по остатку сырья для закупки/перевозки:
+ *   critical — доступно < 0 (Полоцк+Липковская не покрывают) → СРОЧНО ЗАКУПАТЬ;
+ *   transfer — суммарно хватает, но Полоцк в минусе → перевезти с Липковской;
+ *   ok       — хватает на Полоцке.
+ */
+export function stockSignal(plant_qty: number, lip_qty: number, consumed: number): "critical" | "transfer" | "ok" {
+  const available = round2(plant_qty + lip_qty - consumed);
+  if (available < -1e-6) return "critical";
+  if (round2(plant_qty - consumed) < -1e-6) return "transfer";
+  return "ok";
+}
 
 export async function writeRecipe(recipe: {
   code: string; full_name: string; premix_name: string; date: string;
@@ -1072,7 +1090,7 @@ export async function writeRecipe(recipe: {
   await appendRows("Recipes", [[
     uid, recipe.code, recipe.full_name, recipe.premix_name, recipe.date,
     recipe.concentration, recipe.batch_t, recipe.customer, recipe.period,
-    recipe.quarter, recipe.file_name, RECIPE_STATUS.IN_WORK, recipe.base_batch_kg
+    recipe.quarter, recipe.file_name, RECIPE_STATUS.PLAN, recipe.base_batch_kg
   ]]);
   return uid;
 }
@@ -1207,13 +1225,14 @@ export async function getRecipeConsumptionByStatus(statuses: Set<string>): Promi
 
 /**
  * «Живые остатки» = (Полоцк + Липковская, последний снимок) − потребление
- * рецептов в статусах «в работе» и «удалён». Отменённые рецепты не вычитаются
- * (сырьё вернулось). Товары в пути (Inbound) НЕ включаются — их учитываем только
- * при заказе сырья.
+ * рецептов во всех статусах, КРОМЕ отменённых (STOCK_CONSUMING_STATUSES).
+ * У отменённого рецепта сырьё вернулось, поэтому не вычитается. Товары в пути
+ * (Inbound) НЕ включаются — их учитываем только при заказе сырья.
  */
 export async function getLiveStock(): Promise<Array<{
   raw_uid: string; name: string; plant_qty: number; lip_qty: number;
   base: number; consumed: number; available: number;
+  signal: "critical" | "transfer" | "ok";
 }>> {
   const [plant, lip, consumed, catalog] = await Promise.all([
     getLatestPlantStock(),
@@ -1232,9 +1251,80 @@ export async function getLiveStock(): Promise<Array<{
     out.push({
       raw_uid: uid, name: nameByUid.get(uid) || uid,
       plant_qty, lip_qty, base, consumed: cons, available: round2(base - cons),
+      signal: stockSignal(plant_qty, lip_qty, cons),
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  return out;
+}
+
+/**
+ * Дефицит и атрибуция: по каждому сырью — остаток (Полоцк/Липковская), суммарное
+ * списание, доступно, сигнал к закупке И разбивка по рецептам-потребителям
+ * (матрица сырьё × рецепт), чтобы видеть, из чего сложился дефицит и перераспре-
+ * делить объёмы. Учитываются только рецепты в «списывающих» статусах (всё, кроме
+ * «отменён»). Возвращаются все сырьевые позиции, у которых есть остаток или
+ * потребление; сортировка — дефицитные (critical, потом transfer) сверху.
+ */
+export async function getStockDeficit(): Promise<Array<{
+  raw_uid: string; name: string; plant_qty: number; lip_qty: number;
+  base: number; consumed: number; available: number;
+  signal: "critical" | "transfer" | "ok";
+  contributors: { recipe_uid: string; recipe_name: string; status: string; qty: number }[];
+}>> {
+  const [plant, lip, catalog, recipeRows, lineRows] = await Promise.all([
+    getLatestPlantStock(),
+    getLatestLipStock(),
+    getAllRawMaterials(),
+    readRange("Recipes", "A2:M5000"),
+    readRange("RecipeLines", "A2:L5000"),
+  ]);
+  const nameByUid = new Map(catalog.map(m => [m.raw_uid, m.full_name]));
+  const recInfo = new Map<string, { name: string; status: string }>();
+  for (const r of recipeRows) {
+    if (!r[0]) continue;
+    recInfo.set(String(r[0]), {
+      name: String(r[2] || r[1] || r[0]),
+      status: String(r[11] || ""),
+    });
+  }
+  // Потребление и вклад каждого рецепта по сырью (только списывающие статусы).
+  const consumed = new Map<string, number>();
+  const contribByRaw = new Map<string, Map<string, { recipe_name: string; status: string; qty: number }>>();
+  for (const r of lineRows) {
+    const recUid = String(r[1] || "");
+    const rawUid = String(r[2] || "");
+    if (!recUid || !rawUid) continue;
+    const info = recInfo.get(recUid);
+    if (!info || !STOCK_CONSUMING_STATUSES.has(info.status)) continue;
+    const qty = parseNum(r[7]);
+    if (!(qty > 0)) continue;
+    consumed.set(rawUid, round2((consumed.get(rawUid) || 0) + qty));
+    let byRec = contribByRaw.get(rawUid);
+    if (!byRec) { byRec = new Map(); contribByRaw.set(rawUid, byRec); }
+    const cur = byRec.get(recUid);
+    if (cur) cur.qty = round2(cur.qty + qty);
+    else byRec.set(recUid, { recipe_name: info.name, status: info.status, qty });
+  }
+  const uids = new Set<string>([...plant.keys(), ...lip.keys(), ...consumed.keys()]);
+  const rank = { critical: 0, transfer: 1, ok: 2 } as const;
+  const out = [];
+  for (const uid of uids) {
+    const plant_qty = plant.get(uid) || 0;
+    const lip_qty = lip.get(uid) || 0;
+    const base = round2(plant_qty + lip_qty);
+    const cons = consumed.get(uid) || 0;
+    const contributors = [...(contribByRaw.get(uid)?.entries() || [])]
+      .map(([recipe_uid, c]) => ({ recipe_uid, ...c }))
+      .sort((a, b) => b.qty - a.qty);
+    out.push({
+      raw_uid: uid, name: nameByUid.get(uid) || uid,
+      plant_qty, lip_qty, base, consumed: cons, available: round2(base - cons),
+      signal: stockSignal(plant_qty, lip_qty, cons), contributors,
+    });
+  }
+  out.sort((a, b) =>
+    rank[a.signal] - rank[b.signal] || a.name.localeCompare(b.name, "ru"));
   return out;
 }
 

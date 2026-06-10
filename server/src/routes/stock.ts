@@ -12,7 +12,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import {
-  getLiveStock, getStockSnapshots, deleteStockSnapshot,
+  getLiveStock, getStockSnapshots, deleteStockSnapshot, getStockDeficit,
 } from "../services/sheetsService";
 
 const router = Router();
@@ -24,6 +24,16 @@ router.get("/live", async (_req: Request, res: Response) => {
     res.json(await getLiveStock());
   } catch (err: any) {
     console.error("[stock/live]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Дефицит/закупка: по каждому сырью остаток, списание, сигнал и разбивка по рецептам. */
+router.get("/deficit", async (_req: Request, res: Response) => {
+  try {
+    res.json(await getStockDeficit());
+  } catch (err: any) {
+    console.error("[stock/deficit]", err);
     res.status(500).json({ error: err.message });
   }
 });

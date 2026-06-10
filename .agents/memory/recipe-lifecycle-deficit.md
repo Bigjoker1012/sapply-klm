@@ -1,0 +1,32 @@
+---
+name: Recipe lifecycle «План→Факт» + deficit
+description: How recipe statuses drive stock consumption and why shortage never blocks.
+---
+
+# Recipe lifecycle and stock consumption
+
+Recipes are NOT deleted on completion — they carry a status. Stock consumption is
+driven by status via `STOCK_CONSUMING_STATUSES` in `sheetsService.ts`:
+**consuming = every status EXCEPT «отменён» (cancel).** New recipes are written in
+status «план». Legacy statuses («в работе», «активен», «удалён», «архив») all
+consume. Only cancel returns the raw material (Need rows deleted on cancel,
+re-written on any other transition).
+
+**Why:** the business wants planned recipes to reserve raw material immediately and
+to keep a paper trail (план → архив) instead of destroying recipes. Cancel is the
+only "release the stock" action.
+
+**How to apply:**
+- Status transitions go through `POST /recipes/:uid/status {status: plan|archive|cancel}`
+  (bulk: `{uids, status}`). There is NO `/cancel` or `/archive` route anymore.
+- Shortage NEVER blocks. The old 409 admission gate (upload) and 409 shortage gate
+  (tons update) were removed. Insufficient stock just drives `available` negative,
+  which surfaces as a procurement signal — do not re-add a block. Only a *cancelled*
+  recipe is rejected by the tons endpoint.
+- `stockSignal(plant, lip, consumed)`: `critical` = plant+lip−consumed < 0 (срочно
+  закупать); `transfer` = plant−consumed < 0 but total ≥ 0 (перевезти с Липковской);
+  else `ok`. Returned by both `getLiveStock` and `getStockDeficit`.
+- `getStockDeficit()` returns per-raw stock plus `contributors[]`
+  (recipe_uid/name/status/qty) — the raw×recipe matrix the Дефицит tab renders.
+- All stock-mutating flows (upload, status transition, tons) run under the shared
+  stock mutex (`withStockMutation`).

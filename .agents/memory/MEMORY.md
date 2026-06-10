@@ -12,4 +12,4 @@
 - [Прод-WAF режет PDF (403)](prod-waf-blocks-pdf.md) — эдж деплоя 403 на «%PDF» в теле (только прод, не dev); обход — клиент шлёт base64-текст, сервер декодирует (readUpload). Тест-загрузки чистить (Sheets общие).
 - [Resolve unmatched recipe lines](resolve-unmatched-recipe-lines.md) — recipe parse is NOT live; adding an alias only fixes FUTURE uploads. To fix a current recipe: patch RecipeLines (col C uid, col L matched) + append Need; confirm endpoint touches neither.
 - [Recipe price-per-kg rule](recipe-price-per-kg-rule.md) — INVERTED: price>0 = our material (procurement/списание); price=0 = plant (excluded); null = ours. isPlant = ===0 only. Excel «цена» col collides with «кг» qty detection.
-- [Recipe lifecycle + live stock](recipe-lifecycle-live-stock.md) — 3 statuses (в работе/отменён=return/удалён=keep consumed); live stock = Полоцк+Липковская−consumed, no inbound; upload sufficiency gate 409 under in-process mutex; Need kept separate.
+- [Recipe lifecycle «План→Факт» + deficit](recipe-lifecycle-deficit.md) — рецепты не удаляются, статус (всё кроме «отменён») = потребление; нехватка НЕ блокирует (минус→сигнал закупки); переход POST /recipes/:uid/status.

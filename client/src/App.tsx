@@ -28,7 +28,7 @@ function App() {
           Главная
         </button>
         <button className={tabCls(tab === 'stock')} onClick={() => setTab('stock')}>
-          Рецепты и остатки
+          Склад и рецепты
         </button>
         <button className={tabCls(tab === 'planning')} onClick={() => setTab('planning')}>
           Планирование закупок

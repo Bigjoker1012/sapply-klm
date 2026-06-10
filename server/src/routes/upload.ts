@@ -6,8 +6,6 @@ import {
   writeRecipe, writeRecipeLines, writeNeedFromRecipe,
   getUnresolvedQueue, resolveQueueItem, addAlias,
   filterKdSimilar, getExcludedList, addExcludedBatch, resolveQueueByText,
-  getLatestPlantStock, getLatestLipStock, getRecipeConsumptionByStatus,
-  STOCK_CONSUMING_STATUSES,
 } from "../services/sheetsService";
 import { withStockMutation } from "../services/stockMutex";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
@@ -178,9 +176,6 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     const needLines: { raw_uid: string; net_qty: number }[] = [];
     const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
     const queueItems: { text: string; source_type: string; file_name: string }[] = [];
-    // Требуемое к списанию по raw_uid (только сматченные наши позиции).
-    const required = new Map<string, number>();
-    const nameByUid = new Map<string, string>();
 
     for (const row of parsed.rows) {
       const isPlant = isPlantRow(row);
@@ -214,8 +209,6 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
         newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "recipe" });
         if (consumption_kg > 0) {
           needLines.push({ raw_uid: rawUid, net_qty: consumption_kg });
-          required.set(rawUid, (required.get(rawUid) || 0) + consumption_kg);
-          nameByUid.set(rawUid, row.rawName);
         }
         matched++;
       } else {
@@ -224,33 +217,11 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       }
     }
 
-    // 2. Проверка достаточности склада ПЕРЕД записью. Доступно = (Полоцк +
-    //    Липковская, последний снимок) − уже списанное рецептами «в работе»/
-    //    «удалён». Если хоть одной позиции не хватает — ничего не пишем, возвращаем
-    //    список нехватки (рецепт не пускаем в работу).
-    //    Проверку и запись выполняем под мьютексом — иначе два одновременных
-    //    рецепта могли бы оба пройти проверку по одному остатку и дважды списать.
+    // 2. Создаём рецепт в статусе «план» и пишем состав, синонимы, очередь,
+    //    потребность. Нехватка склада НЕ блокирует загрузку: остаток может уйти
+    //    в минус, сигнал к закупке формируется на вкладке «Дефицит». Запись —
+    //    под мьютексом, чтобы не пересекаться со сменой статуса/выработки.
     const admission = await withStockMutation(async () => {
-      if (required.size) {
-        const [plantStock, lipStock, consumed] = await Promise.all([
-          getLatestPlantStock(),
-          getLatestLipStock(),
-          getRecipeConsumptionByStatus(STOCK_CONSUMING_STATUSES),
-        ]);
-        const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-        const shortages: { raw_uid: string; name: string; required: number; available: number }[] = [];
-        for (const [uid, req2] of required) {
-          const available = round2((plantStock.get(uid) || 0) + (lipStock.get(uid) || 0) - (consumed.get(uid) || 0));
-          if (req2 > available + 1e-6) {
-            shortages.push({ raw_uid: uid, name: nameByUid.get(uid) || uid, required: round2(req2), available });
-          }
-        }
-        if (shortages.length) return { shortages };
-      }
-
-      // 3. Склада хватает — создаём рецепт в статусе «в работе» и пишем состав,
-      //    синонимы, очередь и потребность. Состав (consumption_kg) пишем ДО
-      //    выхода из мьютекса, чтобы следующий рецепт уже видел это списание.
       const recipeUid = await writeRecipe({
         code: parsed.code,
         full_name: parsed.name,
@@ -275,13 +246,6 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
       return { recipeUid };
     });
-
-    if ("shortages" in admission) {
-      return res.status(409).json({
-        error: "Недостаточно сырья на складе — рецепт не пущен в работу",
-        shortages: admission.shortages,
-      });
-    }
 
     // Архивацию документа делаем вне мьютекса — она не влияет на остатки.
     await saveDocument("recipe", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer }, admission.recipeUid);
