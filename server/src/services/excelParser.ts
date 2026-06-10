@@ -283,8 +283,11 @@ export function parseRecipeExcel(buffer: Buffer): {
     const pct = num(row[pctIdx]);
     const qty = num(row[qtyIdx]);
     if (!pct && !qty) continue;
-    // Цена за 1 кг: 0/пусто → наша позиция (берём в закупку); >0 → позиция завода.
-    const pricePerKg = priceIdx >= 0 ? num(row[priceIdx]) : 0;
+    // Цена за 1 кг: >0 → наша позиция (закупка/списание); 0 → позиция завода
+    // (исключаем); пустая ячейка / нет колонки → null (цена неизвестна, трактуем
+    // как нашу, чтобы не потерять позицию).
+    const priceRaw = priceIdx >= 0 ? row[priceIdx] : "";
+    const pricePerKg = (priceRaw === "" || priceRaw == null) ? null : num(priceRaw);
 
     recipeRows.push({ rawName: name, percentage: pct, quantityPerTon: qty, pricePerKg });
   }

@@ -240,6 +240,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
   const [lipFile, setLipFile]             = useState<File | null>(null);
   const [kdFile, setKdFile]               = useState<File | null>(null);
   const [recipeFile, setRecipeFile]       = useState<File | null>(null);
+  const [recipeTons, setRecipeTons]       = useState('');
   const [polotskStatus, setPolotskStatus] = useState('');
   const [lipStatus, setLipStatus]         = useState('');
   const [kdStatus, setKdStatus]           = useState('');
@@ -366,13 +367,26 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
     setUploading(true);
     setRecipeStatus('Обработка рецепта...');
     try {
-      const fd = await buildUploadForm(recipeFile);
+      const tons = parseFloat(recipeTons.replace(',', '.'));
+      const extra = Number.isFinite(tons) && tons > 0 ? { batchTons: String(tons) } : undefined;
+      const fd = await buildUploadForm(recipeFile, extra);
       const r = await axios.post(`${API}/upload/recipe`, fd);
-      setRecipeStatus(`✅ «${r.data.recipeName}» — ${r.data.matched} строк распознано` + (r.data.plant > 0 ? `, ${r.data.plant} позиций завода пропущено (цена за 1 кг проставлена)` : ''));
+      const tonsTxt = r.data.batch_t ? ` (выработка ${r.data.batch_t} т)` : '';
+      setRecipeStatus(`✅ «${r.data.recipeName}» — ${r.data.matched} строк распознано${tonsTxt}` + (r.data.plant > 0 ? `, ${r.data.plant} позиций завода пропущено (цена за 1 кг = 0)` : ''));
       setRecipeFile(null);
+      setRecipeTons('');
       load();
     } catch (e: any) {
-      setRecipeStatus(`❌ ${e.response?.data?.error || 'Ошибка'}`);
+      // 409 — не хватает сырья на складе: рецепт НЕ пущен в работу, выводим список нехватки.
+      const shortages = e.response?.status === 409 ? e.response?.data?.shortages : null;
+      if (Array.isArray(shortages) && shortages.length) {
+        const list = shortages
+          .map((s: any) => `• ${s.name}: нужно ${s.required}, есть ${s.available}`)
+          .join('\n');
+        setRecipeStatus(`❌ Недостаточно сырья — рецепт не пущен в работу:\n${list}`);
+      } else {
+        setRecipeStatus(`❌ ${e.response?.data?.error || 'Ошибка'}`);
+      }
     } finally {
       setUploading(false);
     }
@@ -857,7 +871,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
                 {recipeStatus || 'Загрузите PDF или Excel'}
               </div>
               {recipeStatus && (
-                <div className={`text-xs mb-2 ${recipeStatus.startsWith('✅') ? 'text-green-300' : 'text-red-300'}`}>{recipeStatus}</div>
+                <div className={`text-xs mb-2 whitespace-pre-line ${recipeStatus.startsWith('✅') ? 'text-green-300' : 'text-red-300'}`}>{recipeStatus}</div>
               )}
               <input
                 type="file" accept=".pdf,.xlsx,.xls"
@@ -865,6 +879,14 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
                 className="text-xs text-gray-300 mb-2 w-full"
               />
               {recipeFile && <p className="text-xs text-gray-400 mb-2 truncate">{recipeFile.name}</p>}
+              <label className="block text-xs text-gray-400 mb-1">Выработка, т</label>
+              <input
+                type="number" min="0" step="any" inputMode="decimal"
+                value={recipeTons}
+                onChange={e => setRecipeTons(e.target.value)}
+                placeholder="напр. 5 (пусто = из рецепта)"
+                className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 mb-2"
+              />
               <button
                 onClick={handleRecipeUpload}
                 disabled={!recipeFile || uploading}

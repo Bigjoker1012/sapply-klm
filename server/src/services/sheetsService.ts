@@ -1039,6 +1039,30 @@ export async function deleteNeedByRecipe(recipe_uid: string): Promise<number> {
 
 // ─── RECIPES ────────────────────────────────────────────────────────────────
 
+/**
+ * Статусы рецепта (лист Recipes, колонка L / индекс 11):
+ *   IN_WORK   — рецепт пущен в работу, сырьё списано с остатков.
+ *   CANCELLED — рецепт отменён, сырьё возвращается в общие остатки.
+ *   DELETED   — рецепт отработан и удалён в архив; сырьё НЕ возвращается
+ *               (остаётся списанным).
+ * В «живые остатки» вычитается потребление рецептов в статусах IN_WORK и DELETED;
+ * CANCELLED не вычитается (возврат сырья).
+ */
+export const RECIPE_STATUS = {
+  IN_WORK: "в работе",
+  CANCELLED: "отменён",
+  DELETED: "удалён",
+} as const;
+
+/**
+ * Статусы, при которых сырьё рецепта считается списанным со склада (вычитается
+ * из живых остатков и из доступного при проверке достаточности). «активен» —
+ * легаси-статус старых рецептов, трактуем как «в работе».
+ */
+export const STOCK_CONSUMING_STATUSES = new Set<string>([
+  RECIPE_STATUS.IN_WORK, RECIPE_STATUS.DELETED, "активен",
+]);
+
 export async function writeRecipe(recipe: {
   code: string; full_name: string; premix_name: string; date: string;
   concentration: number; batch_t: number; customer: string; period: string;
@@ -1048,7 +1072,7 @@ export async function writeRecipe(recipe: {
   await appendRows("Recipes", [[
     uid, recipe.code, recipe.full_name, recipe.premix_name, recipe.date,
     recipe.concentration, recipe.batch_t, recipe.customer, recipe.period,
-    recipe.quarter, recipe.file_name, "активен", recipe.base_batch_kg
+    recipe.quarter, recipe.file_name, RECIPE_STATUS.IN_WORK, recipe.base_batch_kg
   ]]);
   return uid;
 }
@@ -1071,9 +1095,141 @@ export async function getRecipesList(): Promise<any[]> {
     .filter(r => r[0] && String(r[0]).startsWith("REC"))
     .map(r => ({
       recipe_uid: r[0], code: r[1], full_name: r[2], premix_name: r[3],
-      date: r[4], batch_t: parseNum(r[6]), customer: r[7], status: r[11],
+      date: r[4], batch_t: parseNum(r[6]), customer: r[7],
+      status: String(r[11] || ""), file_name: r[10] || "",
       base_batch_kg: parseNum(r[12]) || 1000,
     }));
+}
+
+/** Состав одного рецепта (лист RecipeLines, фильтр по recipe_uid в колонке B). */
+export async function getRecipeLines(recipe_uid: string): Promise<any[]> {
+  const rows = await readRange("RecipeLines", "A2:L5000");
+  return rows
+    .filter(r => String(r[1]) === recipe_uid)
+    .map(r => ({
+      id: r[0], recipe_uid: r[1], raw_uid: String(r[2] || ""),
+      name_from_recipe: r[3], activity: r[4], input_pct: parseNum(r[5]),
+      norm_g_per_t: parseNum(r[6]), consumption_kg: parseNum(r[7]),
+      match_status: String(r[11] || ""),
+    }));
+}
+
+/**
+ * Меняет статус рецепта (лист Recipes, колонка L). Возвращает true, если рецепт
+ * найден. Инвалидирует кэш — «живые остатки» сразу пересчитываются.
+ */
+export async function setRecipeStatus(recipe_uid: string, status: string): Promise<boolean> {
+  const rows = await readRange("Recipes", "A2:M5000");
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]) === recipe_uid) {
+      await writeRange("Recipes", `L${i + 2}:L${i + 2}`, [[status]]);
+      invalidateCache();
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Суммирует потребление сырья (RecipeLines.consumption_kg, кол. H) по raw_uid
+ * для рецептов, чей статус входит в `statuses`. Строки без raw_uid (позиции
+ * завода / нераспознанные) не учитываются — со склада списать их нельзя.
+ */
+export async function getRecipeConsumptionByStatus(statuses: Set<string>): Promise<Map<string, number>> {
+  const [recipeRows, lineRows] = await Promise.all([
+    readRange("Recipes", "A2:M5000"),
+    readRange("RecipeLines", "A2:L5000"),
+  ]);
+  const statusByRecipe = new Map<string, string>();
+  for (const r of recipeRows) if (r[0]) statusByRecipe.set(String(r[0]), String(r[11] || ""));
+  const map = new Map<string, number>();
+  for (const r of lineRows) {
+    const recUid = String(r[1] || "");
+    const rawUid = String(r[2] || "");
+    if (!recUid || !rawUid) continue;
+    if (!statuses.has(statusByRecipe.get(recUid) || "")) continue;
+    map.set(rawUid, round2((map.get(rawUid) || 0) + parseNum(r[7])));
+  }
+  return map;
+}
+
+/**
+ * «Живые остатки» = (Полоцк + Липковская, последний снимок) − потребление
+ * рецептов в статусах «в работе» и «удалён». Отменённые рецепты не вычитаются
+ * (сырьё вернулось). Товары в пути (Inbound) НЕ включаются — их учитываем только
+ * при заказе сырья.
+ */
+export async function getLiveStock(): Promise<Array<{
+  raw_uid: string; name: string; plant_qty: number; lip_qty: number;
+  base: number; consumed: number; available: number;
+}>> {
+  const [plant, lip, consumed, catalog] = await Promise.all([
+    getLatestPlantStock(),
+    getLatestLipStock(),
+    getRecipeConsumptionByStatus(STOCK_CONSUMING_STATUSES),
+    getAllRawMaterials(),
+  ]);
+  const nameByUid = new Map(catalog.map(m => [m.raw_uid, m.full_name]));
+  const uids = new Set<string>([...plant.keys(), ...lip.keys(), ...consumed.keys()]);
+  const out = [];
+  for (const uid of uids) {
+    const plant_qty = plant.get(uid) || 0;
+    const lip_qty = lip.get(uid) || 0;
+    const base = round2(plant_qty + lip_qty);
+    const cons = consumed.get(uid) || 0;
+    out.push({
+      raw_uid: uid, name: nameByUid.get(uid) || uid,
+      plant_qty, lip_qty, base, consumed: cons, available: round2(base - cons),
+    });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  return out;
+}
+
+/**
+ * Загруженные снимки остатков (по дате) для группового удаления. Возвращает по
+ * одной записи на пару (лист, дата) с числом строк и суммой количества.
+ */
+export async function getStockSnapshots(): Promise<Array<{
+  sheet: string; date: string; rows: number; qty: number; source: string;
+}>> {
+  const [plant, lip] = await Promise.all([
+    readRange("PlantStock", "A2:G5000"),
+    readRange("LipStock", "A2:I5000"),
+  ]);
+  const agg = new Map<string, { sheet: string; date: string; rows: number; qty: number; source: string }>();
+  const add = (sheet: string, rows: any[][], qtyIdx: number, srcIdx: number) => {
+    for (const r of rows) {
+      const d = String(r[0] || "").trim();
+      if (!ISO_DATE.test(d)) continue;
+      const key = sheet + "|" + d;
+      const cur = agg.get(key) || { sheet, date: d, rows: 0, qty: 0, source: String(r[srcIdx] || "") };
+      cur.rows++;
+      cur.qty = round2(cur.qty + parseNum(r[qtyIdx]));
+      if (!cur.source && r[srcIdx]) cur.source = String(r[srcIdx]);
+      agg.set(key, cur);
+    }
+  };
+  add("PlantStock", plant, 3, 5);
+  add("LipStock", lip, 3, 7);
+  return Array.from(agg.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/** Удаляет все строки снимка (sheet, date). Возвращает число удалённых строк. */
+export async function deleteStockSnapshot(sheet: string, date: string): Promise<number> {
+  if (sheet !== "PlantStock" && sheet !== "LipStock") {
+    throw new Error(`Недопустимый лист остатков: ${sheet}`);
+  }
+  const range = sheet === "PlantStock" ? "A2:G5000" : "A2:I5000";
+  const lastCol = sheet === "PlantStock" ? "G" : "I";
+  const rows = await readRange(sheet, range);
+  const keep = rows.filter(r => String(r[0] || "").trim() !== date);
+  const removed = rows.length - keep.length;
+  if (removed === 0) return 0;
+  await clearRange(sheet, range);
+  if (keep.length) await writeRange(sheet, `A2:${lastCol}${keep.length + 1}`, keep);
+  invalidateCache();
+  return removed;
 }
 
 // ─── APP LOG ────────────────────────────────────────────────────────────────
