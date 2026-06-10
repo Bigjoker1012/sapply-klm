@@ -9,6 +9,7 @@ import {
   getLatestPlantStock, getLatestLipStock, getRecipeConsumptionByStatus,
   STOCK_CONSUMING_STATUSES,
 } from "../services/sheetsService";
+import { withStockMutation } from "../services/stockMutex";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
 import { parsePolotskExcel, parseRecipeExcel, parseKdExcel } from "../services/excelParser";
 import { saveDocument } from "../services/documentArchive";
@@ -17,26 +18,6 @@ const router = Router();
 // Лимит с запасом: при обходе WAF файл приходит в base64 (≈ +33% к размеру),
 // поэтому держим 45MB, чтобы фактический предел исходного файла оставался ~30MB.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 45 * 1024 * 1024 } });
-
-/**
- * Внутрипроцессный мьютекс для приёма рецепта в работу. Деплой — единственный
- * инстанс (target=vm), поэтому сериализация в памяти полностью исключает гонку,
- * когда два одновременных рецепта проходят проверку достаточности по одному и
- * тому же остатку и оба списывают сырьё (двойное списание). Критическая секция:
- * проверка склада → запись рецепта/строк/потребности.
- */
-let recipeAdmissionLock: Promise<void> = Promise.resolve();
-async function withRecipeAdmissionLock<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = recipeAdmissionLock;
-  let release!: () => void;
-  recipeAdmissionLock = new Promise<void>(r => (release = r));
-  await prev;
-  try {
-    return await fn();
-  } finally {
-    release();
-  }
-}
 
 /**
  * Эдж деплоя (WAF) блокирует HTTP 403 любую загрузку с сигнатурой «%PDF» в теле
@@ -249,7 +230,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     //    список нехватки (рецепт не пускаем в работу).
     //    Проверку и запись выполняем под мьютексом — иначе два одновременных
     //    рецепта могли бы оба пройти проверку по одному остатку и дважды списать.
-    const admission = await withRecipeAdmissionLock(async () => {
+    const admission = await withStockMutation(async () => {
       if (required.size) {
         const [plantStock, lipStock, consumed] = await Promise.all([
           getLatestPlantStock(),

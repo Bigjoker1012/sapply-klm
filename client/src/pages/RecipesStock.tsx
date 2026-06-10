@@ -100,6 +100,33 @@ export default function RecipesStock({ onBack }: { onBack?: () => void }) {
     }
   };
 
+  const editTons = async (r: Recipe) => {
+    const input = prompt(
+      `Новая выработка (т) для «${r.full_name || r.code || r.recipe_uid}». Текущая: ${r.batch_t}.\n` +
+      `При уменьшении лишнее сырьё вернётся в остатки; при увеличении проверим склад.`,
+      String(r.batch_t || ''),
+    );
+    if (input == null) return;
+    const tons = parseFloat(input.replace(',', '.'));
+    if (!Number.isFinite(tons) || tons <= 0) { flash('❌ Некорректное число тонн'); return; }
+    setBusy(true);
+    try {
+      await axios.post(`${API}/recipes/${r.recipe_uid}/tons`, { tons });
+      flash('✅ Выработка обновлена, остатки и потребность пересчитаны');
+      await load();
+    } catch (e: any) {
+      const sh = e.response?.status === 409 ? e.response?.data?.shortages : null;
+      if (Array.isArray(sh) && sh.length) {
+        const list = sh.map((s: any) => `• ${s.name}: нужно ещё ${s.required}, есть ${s.available}`).join('\n');
+        alert(`Недостаточно сырья для увеличения выработки:\n${list}`);
+      } else {
+        flash(`❌ ${e.response?.data?.error || 'Ошибка'}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const bulkRecipes = async (action: 'cancel' | 'archive') => {
     if (!selRecipes.size) return;
     const label = action === 'cancel' ? 'отменить' : 'удалить';
@@ -247,6 +274,8 @@ export default function RecipesStock({ onBack }: { onBack?: () => void }) {
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">
                     {isInWork(r.status) ? (
                       <>
+                        <button onClick={() => editTons(r)} disabled={busy}
+                          className="text-xs text-blue-300 hover:underline mr-3 disabled:opacity-40">Выработка</button>
                         <button onClick={() => recipeAction(r.recipe_uid, 'cancel')} disabled={busy}
                           className="text-xs text-yellow-300 hover:underline mr-3 disabled:opacity-40">Отменить</button>
                         <button onClick={() => recipeAction(r.recipe_uid, 'archive')} disabled={busy}

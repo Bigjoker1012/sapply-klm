@@ -1101,6 +1101,58 @@ export async function getRecipesList(): Promise<any[]> {
     }));
 }
 
+/**
+ * Меняет выработку рецепта (тонны) и пересчитывает расход по всем его строкам
+ * пропорционально (новый_расход = старый × новые_т / старые_т). Списание со
+ * склада считается динамически из RecipeLines.consumption_kg, поэтому при
+ * уменьшении выработки «лишнее» сырьё автоматически возвращается в остатки, а при
+ * увеличении — дополнительно списывается (проверку достаточности делает роут ДО
+ * вызова, под мьютексом). Обновляет Recipes: batch_t (G) и base_batch_kg (M).
+ * Возвращает пересчитанные строки потребности (только сматченные позиции).
+ */
+export async function updateRecipeTons(recipe_uid: string, newTons: number): Promise<{
+  found: boolean; oldBatchT: number; newBatchT: number;
+  needLines: { raw_uid: string; net_qty: number }[];
+}> {
+  const recRows = await readRange("Recipes", "A2:M5000");
+  let recIdx = -1;
+  for (let i = 0; i < recRows.length; i++) {
+    if (String(recRows[i][0]) === recipe_uid) { recIdx = i; break; }
+  }
+  if (recIdx < 0) return { found: false, oldBatchT: 0, newBatchT: 0, needLines: [] };
+
+  // Канонический «старый объём» считаем так же, как роут проверки достаточности
+  // (batch_t из col G, иначе base_batch_kg/1000, иначе 1т) — иначе проверка и
+  // фактическое масштабирование разойдутся при расхождении G и M.
+  const oldBaseKg = parseNum(recRows[recIdx][12]) || 1000;
+  const oldBatchT = parseNum(recRows[recIdx][6]) || (oldBaseKg / 1000) || 1;
+  const factor = oldBatchT > 0 ? newTons / oldBatchT : 0;
+  const newBaseKg = round2(newTons * 1000);
+
+  // Сначала пишем RecipeLines — это источник истины для списания/остатков.
+  // Колонки batch_t/base_batch_kg в Recipes косметические, поэтому пишем их
+  // после: при частичном сбое остатки уже согласованы с расходом.
+  const lineRows = await readRange("RecipeLines", "A2:L5000");
+  const needLines: { raw_uid: string; net_qty: number }[] = [];
+  let changed = false;
+  for (const row of lineRows) {
+    if (String(row[1]) !== recipe_uid) continue;
+    const newCons = round2(parseNum(row[7]) * factor);
+    row[7] = newCons;
+    changed = true;
+    const rawUid = String(row[2] || "");
+    if (rawUid && String(row[11] || "") === "matched" && newCons > 0) {
+      needLines.push({ raw_uid: rawUid, net_qty: newCons });
+    }
+  }
+  if (changed) await writeRange("RecipeLines", `A2:L${lineRows.length + 1}`, lineRows);
+
+  await writeRange("Recipes", `G${recIdx + 2}:G${recIdx + 2}`, [[newTons]]);
+  await writeRange("Recipes", `M${recIdx + 2}:M${recIdx + 2}`, [[newBaseKg]]);
+  invalidateCache();
+  return { found: true, oldBatchT, newBatchT: newTons, needLines };
+}
+
 /** Состав одного рецепта (лист RecipeLines, фильтр по recipe_uid в колонке B). */
 export async function getRecipeLines(recipe_uid: string): Promise<any[]> {
   const rows = await readRange("RecipeLines", "A2:L5000");
