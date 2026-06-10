@@ -45,7 +45,55 @@ export function invalidateCache(): void {
   cache.clear();
 }
 
-async function sheetGet(path: string) {
+// ─── Rate limiter for the Sheets API ────────────────────────────────────────
+// Google ограничивает ~10 запросов/сек на repl. Дашборд читает несколько листов
+// через Promise.all, плюс параллельно опрашиваются вкладки склада и клиент —
+// бурст легко превышает лимит и часть ответов падает 429 → 500. Пропускаем все
+// вызовы через токен-бакет (≤ MAX_RPS в скользящую секунду) и ретраим
+// rate-limit с бэкоффом. Бизнес-логика не меняется.
+const MAX_RPS = 8;
+const MAX_RETRIES = 5;
+let _windowStart = 0;
+let _countInWindow = 0;
+let _slotChain: Promise<void> = Promise.resolve();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, Math.max(0, ms)));
+}
+
+// Резервирует «слот» под один запрос, не превышая MAX_RPS в секунду.
+// Захват счётчика сериализован через _slotChain, сам HTTP идёт параллельно.
+async function acquireSlot(): Promise<void> {
+  const prev = _slotChain;
+  let release!: () => void;
+  _slotChain = new Promise<void>(r => { release = r; });
+  await prev;
+  try {
+    let now = Date.now();
+    if (now - _windowStart >= 1000) {
+      _windowStart = now;
+      _countInWindow = 0;
+    }
+    if (_countInWindow >= MAX_RPS) {
+      await sleep(1000 - (now - _windowStart));
+      _windowStart = Date.now();
+      _countInWindow = 0;
+    }
+    _countInWindow++;
+  } finally {
+    release();
+  }
+}
+
+function isRateLimited(x: any): boolean {
+  if (!x) return false;
+  const status = x?.response?.status ?? x?.code ?? x?.status;
+  if (status === 429 || status === "429") return true;
+  const msg = String(x?.response?.data?.error?.message ?? x?.message ?? x?.status ?? "");
+  return /rate limit|RESOURCE_EXHAUSTED|quota/i.test(msg);
+}
+
+async function rawSheetGet(path: string) {
   if (GOOGLE_SA_JSON) {
     const auth = await getAuthHeader();
     const { data } = await axios.get(`${SHEETS_BASE}${path}`, { headers: { Authorization: auth } });
@@ -57,7 +105,30 @@ async function sheetGet(path: string) {
   return r.json();
 }
 
+async function sheetGet(path: string) {
+  for (let attempt = 0; ; attempt++) {
+    await acquireSlot();
+    try {
+      const data = await rawSheetGet(path);
+      // Прокси-путь не бросает на 429 — отдаёт тело {error:{...}}. Ловим здесь и
+      // ретраим, чтобы readRange не превратил временный лимит в постоянную ошибку.
+      if (data && data.error && isRateLimited(data.error) && attempt < MAX_RETRIES) {
+        await sleep(250 * (attempt + 1) ** 2);
+        continue;
+      }
+      return data;
+    } catch (err) {
+      if (isRateLimited(err) && attempt < MAX_RETRIES) {
+        await sleep(250 * (attempt + 1) ** 2);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 async function sheetPost(path: string, body: object) {
+  await acquireSlot();
   if (GOOGLE_SA_JSON) {
     const auth = await getAuthHeader();
     const { data } = await axios.post(`${SHEETS_BASE}${path}`, body, {
@@ -76,6 +147,7 @@ async function sheetPost(path: string, body: object) {
 }
 
 async function sheetPut(path: string, body: object) {
+  await acquireSlot();
   if (GOOGLE_SA_JSON) {
     const auth = await getAuthHeader();
     const { data } = await axios.put(`${SHEETS_BASE}${path}`, body, {
