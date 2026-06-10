@@ -885,8 +885,17 @@ export async function writeLipStock(
     return ISO_DATE.test(d) && d !== today;
   });
   const allRows = [...history, ...snapshot];
-  await clearRange("LipStock", "A2:I5000");
-  if (allRows.length) await writeRange("LipStock", `A2:I${allRows.length + 1}`, allRows);
+  // Безопасная замена: СНАЧАЛА пишем данные, ПОТОМ подчищаем хвост старых строк.
+  // Если делать наоборот (clear→write) и второй шаг сорвётся (лимит/сбой), лист
+  // остаётся пустым и остатки Липковской пропадают полностью.
+  if (allRows.length) {
+    await writeRange("LipStock", `A2:I${allRows.length + 1}`, allRows);
+    if (existing.length > allRows.length) {
+      await clearRange("LipStock", `A${allRows.length + 2}:I${existing.length + 1}`);
+    }
+  } else {
+    await clearRange("LipStock", "A2:I5000");
+  }
   invalidateCache();
 }
 
@@ -906,8 +915,16 @@ export async function writeLipStockBatch(
   const keepRows = existing.filter(r => r[0] !== today);
   const newRows = rows.map(r => [today, r.raw_uid, r.name_from_source, r.qty, 0, r.qty, "кг", r.source, "FALSE"]);
   const allRows = [...keepRows, ...newRows];
-  await clearRange("LipStock", "A2:I5000");
-  if (allRows.length) await writeRange("LipStock", `A2:I${allRows.length + 1}`, allRows);
+  // Безопасная замена: сначала запись, затем подчистка хвоста (см. writeLipStock),
+  // чтобы сбой между шагами не оставил лист LipStock пустым.
+  if (allRows.length) {
+    await writeRange("LipStock", `A2:I${allRows.length + 1}`, allRows);
+    if (existing.length > allRows.length) {
+      await clearRange("LipStock", `A${allRows.length + 2}:I${existing.length + 1}`);
+    }
+  } else {
+    await clearRange("LipStock", "A2:I5000");
+  }
   invalidateCache();
 }
 
@@ -928,8 +945,16 @@ export async function writeLipBatchesBulk(
   const keepRows = existing.filter(r => r[0] !== today);
   const newRows = rows.map(r => [today, r.raw_uid, r.batch_code, r.vendor_name, r.qty, "кг", r.source]);
   const allRows = [...keepRows, ...newRows];
-  await clearRange("LipBatches", "A2:G5000");
-  if (allRows.length) await writeRange("LipBatches", `A2:G${allRows.length + 1}`, allRows);
+  // Безопасная замена: сначала запись, затем подчистка хвоста (см. writeLipStock),
+  // чтобы сбой между шагами не уничтожил партии Липковской.
+  if (allRows.length) {
+    await writeRange("LipBatches", `A2:G${allRows.length + 1}`, allRows);
+    if (existing.length > allRows.length) {
+      await clearRange("LipBatches", `A${allRows.length + 2}:G${existing.length + 1}`);
+    }
+  } else {
+    await clearRange("LipBatches", "A2:G5000");
+  }
   invalidateCache();
 }
 

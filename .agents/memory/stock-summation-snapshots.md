@@ -21,8 +21,15 @@ description: How PlantStock/LipStock totals must be computed (full-snapshot mode
 
 **Запись:**
 - `writePlantStock` и `writeLipStockBatch` (загрузка файла /polotsk, /lipkovskaya,
-  /kd) — полный снимок: удаляют ВСЕ сегодняшние строки и пишут весь набор. НЕ
+  /kd) — полный снимок: заменяют ВСЕ сегодняшние строки целым набором. НЕ
   частично по uid (иначе повторная загрузка с меньшим набором оставит мусор).
+- **Порядок записи ОБЯЗАН быть «сначала writeRange, потом clearRange хвоста»**, НЕ
+  «clear→write». Старый clear→write терял ВСЕ остатки Липковской: clearRange
+  проходил, а writeRange срывался на лимите 429 → LipStock оставался пустым (lip_qty=0
+  во всех остатках, нет снимков Липковской), при этом LipBatches уцелевал. Пишем
+  данные в A2:.., затем чистим только хвост `A{n+2}:..{existing.length+1}`. Касается
+  writeLipStock / writeLipStockBatch / writeLipBatchesBulk. Восстановить пустой
+  LipStock можно из LipBatches (агрегат последней даты per uid через writeLipStockBatch).
 - `writeLipStock` (ручное обновление ОДНОЙ позиции, POST /api/inventory/lipkovskaya)
   ОБЯЗАН перенести текущий последний снимок в сегодня целиком (carry-forward),
   иначе при чтении «макс. дата» все прочие позиции обнулятся. Переносить ТОЛЬКО
