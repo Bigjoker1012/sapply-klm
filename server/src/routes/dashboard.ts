@@ -24,7 +24,8 @@ import {
   getLatestLipStock,
   getInboundTotals,
   getInboundList,
-  getNeedTotals,
+  getRecipeConsumptionByStatus,
+  STOCK_CONSUMING_STATUSES,
 } from "../services/sheetsService";
 
 const router = Router();
@@ -98,12 +99,16 @@ interface UnmatchedDto {
  * «Планирование закупок», чтобы цифры на «Главной» совпадали с реальностью.
  */
 async function loadAggregates() {
+  // Потребность берём из ЖИВОГО потребления рецептов (тот же источник, что и
+  // вкладка «Дефицит»: RecipeLines, отфильтрованные по списывающим статусам), а НЕ
+  // из листа Need — он пишется только при смене статуса/разборе и легко устаревает,
+  // из-за чего Главная показывала «Норма», пока «Дефицит» видел реальную нехватку.
   const [catalog, plant, lip, inbound, need] = await Promise.all([
     getAllRawMaterials(),
     getLatestPlantStock(),
     getLatestLipStock(),
     getInboundTotals(),
-    getNeedTotals(),
+    getRecipeConsumptionByStatus(STOCK_CONSUMING_STATUSES),
   ]);
   const round2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
   return catalog

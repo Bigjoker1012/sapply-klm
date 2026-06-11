@@ -30,3 +30,14 @@ only "release the stock" action.
   (recipe_uid/name/status/qty) — the raw×recipe matrix the Дефицит tab renders.
 - All stock-mutating flows (upload, status transition, tons) run under the shared
   stock mutex (`withStockMutation`).
+
+**Один источник потребности для ВСЕХ экранов.** Потребность сырья считать ТОЛЬКО из
+живого потребления рецептов (`getRecipeConsumptionByStatus(STOCK_CONSUMING_STATUSES)`,
+читает RecipeLines напрямую), а НЕ из листа `Need`/`getNeedTotals`. Лист Need
+пишется лишь при разборе/смене статуса и легко расходится с RecipeLines (после
+правок выработки, частичных записей под 429 и т.п.). Симптом рассинхрона: вкладка
+«Дефицит» показывает реальную нехватку, а «Главная» (Dashboard) — всё «Норма», т.к.
+брала need из устаревшего Need. **Why:** две параллельные модели спроса всегда
+разъезжаются — держим единый источник. Главная при этом законно отличается шкалой
+(4-уровневый коэф. покрытия on_hand/need + учёт inbound), а «Дефицит» — сигналом
+critical/transfer/ok без inbound; это не баг.
