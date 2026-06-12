@@ -188,8 +188,14 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
         : row.quantityPerTon > 0
         ? row.quantityPerTon / recipe_batch_t
         : 0;
-      // Списание/потребность под фактическую выработку заказа.
-      const consumption_kg = dose_kg_per_t * batch_t;
+      // Списание берём из графы «Расход сырья, кг» — там реальный расход с
+      // учтёнными мех. потерями (≈0,8%); иначе остатки не сходятся (норма без
+      // потерь занижает списание). Расход задан на выработку рецепта
+      // (recipe_batch_t), поэтому масштабируем к выработке заказа (batch_t).
+      // Фолбэк (PDF/нет колонки) — норма × выработка.
+      const consumption_kg = row.consumptionKg && row.consumptionKg > 0
+        ? row.consumptionKg * (batch_t / recipe_batch_t)
+        : dose_kg_per_t * batch_t;
 
       lines.push({
         raw_uid: rawUid,

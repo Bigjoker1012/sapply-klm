@@ -22,6 +22,9 @@ export interface RecipeRow {
   // (исключаем); null → цена неизвестна (источник без колонки цены) → трактуем
   // как нашу, чтобы не потерять позицию.
   pricePerKg: number | null;
+  // «Расход сырья, кг» с учтёнными мех. потерями (есть в Excel-рецептах; в PDF —
+  // обычно отсутствует). Приоритетный источник списания, см. routes/upload.ts.
+  consumptionKg?: number;
 }
 
 export interface ParsedRecipe {

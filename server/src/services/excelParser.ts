@@ -37,6 +37,9 @@ export interface RecipeRow {
   percentage: number;
   quantityPerTon: number;
   pricePerKg: number;
+  // «Расход сырья, кг» из рецепта — реальный расход с учтёнными мех. потерями
+  // (≈0,8%), заданный на выработку рецепта. Приоритетный источник списания.
+  consumptionKg?: number;
 }
 
 /**
@@ -264,12 +267,17 @@ export function parseRecipeExcel(buffer: Buffer): {
   // Колонку «Цена» ищем ПЕРВОЙ: заголовок «Цена за 1 кг» содержит «кг», поэтому
   // её нужно исключить из поиска колонки расхода, иначе расход определится неверно.
   const priceIdx = headers.findIndex((h: string) => h.includes("цена"));
+  // «Расход сырья, кг» — реальный расход с учтёнными мех. потерями (≈0,8%).
+  // Это ОТДЕЛЬНАЯ от «нормы г/т» колонка и приоритетный источник списания
+  // (см. routes/upload.ts), иначе остатки не сходятся.
+  const consumptionIdx = headers.findIndex((h: string) => h.includes("расход") && h.includes("кг"));
   let nameIdx = headers.findIndex((h: string) => h.includes("наим") || h.includes("компон") || h.includes("сырь"));
   let pctIdx  = headers.findIndex((h: string) => h.includes("%") || h.includes("ввод") || h.includes("проц"));
+  // Колонка нормы (г/т) — НЕ цена и НЕ расход-с-потерями (их исключаем).
   let qtyIdx  = headers.findIndex((h: string, i: number) =>
-    i !== priceIdx && (h.includes("г/т") || h.includes("норм") || h.includes("расход")));
+    i !== priceIdx && i !== consumptionIdx && (h.includes("г/т") || h.includes("норм")));
   if (qtyIdx < 0) qtyIdx = headers.findIndex((h: string, i: number) =>
-    i !== priceIdx && i !== nameIdx && i !== pctIdx && h.includes("кг"));
+    i !== priceIdx && i !== consumptionIdx && i !== nameIdx && i !== pctIdx && h.includes("кг"));
   if (nameIdx < 0) nameIdx = 1;
   if (pctIdx  < 0) pctIdx  = 3;
   if (qtyIdx  < 0) qtyIdx  = 4;
@@ -282,18 +290,22 @@ export function parseRecipeExcel(buffer: Buffer): {
     const row = rows[r];
     const name = String(row[nameIdx] || "").trim();
     if (!name || name.length < 2) continue;
-    if (/^итого|^всего|^total/i.test(name)) continue;
+    // Промежуточные итоги («ВИТАМИНЫ - ИТОГО», «МИКРОЭЛЕМЕНТЫ - ИТОГО») — не сырьё.
+    if (/итог|всего|^total/i.test(name)) continue;
 
     const pct = num(row[pctIdx]);
     const qty = num(row[qtyIdx]);
-    if (!pct && !qty) continue;
+    // Реальный расход с мех. потерями (для списания); задан на выработку рецепта.
+    const consumptionKg = consumptionIdx >= 0 ? num(row[consumptionIdx]) : 0;
+    // Строка — сырьё, если есть хоть одно количественное поле (%/норма/расход).
+    if (!pct && !qty && !consumptionKg) continue;
     // Цена за 1 кг: >0 → наша позиция (закупка/списание); 0 → позиция завода
     // (исключаем); пустая ячейка / нет колонки → null (цена неизвестна, трактуем
     // как нашу, чтобы не потерять позицию).
     const priceRaw = priceIdx >= 0 ? row[priceIdx] : "";
     const pricePerKg = (priceRaw === "" || priceRaw == null) ? null : num(priceRaw);
 
-    recipeRows.push({ rawName: name, percentage: pct, quantityPerTon: qty, pricePerKg });
+    recipeRows.push({ rawName: name, percentage: pct, quantityPerTon: qty, pricePerKg, consumptionKg });
   }
 
   return {
