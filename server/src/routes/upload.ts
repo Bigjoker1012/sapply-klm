@@ -9,7 +9,7 @@ import {
 } from "../services/sheetsService";
 import { withStockMutation } from "../services/stockMutex";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
-import { parsePolotskExcel, parseRecipeExcel, parseKdExcel } from "../services/excelParser";
+import { parsePolotskExcel, parseRecipeExcel, parseKdExcel, recipeCodeFromFilename, isOrgName } from "../services/excelParser";
 import { saveDocument } from "../services/documentArchive";
 
 const router = Router();
@@ -222,10 +222,19 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     //    в минус, сигнал к закупке формируется на вкладке «Дефицит». Запись —
     //    под мьютексом, чтобы не пересекаться со сменой статуса/выработки.
     const admission = await withStockMutation(async () => {
+      // Код рецепта — главный идентификатор в списке. Если из содержимого не
+      // вытащился (часто в Excel технолога), берём из имени файла, которое на
+      // проекте именуется по коду («Д-П60-3_Б20_ПЛЦ-155.xlsx»).
+      const recipeCode = parsed.code || recipeCodeFromFilename(up.originalname);
+      // Имя рецепта: описание из документа, иначе сам код. Никогда не сохраняем
+      // наименование завода-заказчика («ОАО …комбинат») как имя рецепта.
+      const recipeName = parsed.name && parsed.name !== "Рецепт" && !isOrgName(parsed.name)
+        ? parsed.name
+        : (recipeCode || "Рецепт");
       const recipeUid = await writeRecipe({
-        code: parsed.code,
-        full_name: parsed.name,
-        premix_name: parsed.name,
+        code: recipeCode,
+        full_name: recipeName,
+        premix_name: recipeName,
         date: parsed.date,
         concentration: 0,
         batch_t,

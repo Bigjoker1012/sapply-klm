@@ -227,9 +227,13 @@ export function parseRecipeExcel(buffer: Buffer): {
 
   for (let r = 0; r < Math.min(20, rows.length); r++) {
     const line = rows[r].map((v: any) => String(v || "").trim()).join(" ").trim();
-    if (!recipeName && line.length > 4 && !/^\d/.test(line)) recipeName = line.slice(0, 120);
-    const codeMatch = line.match(/\b(Д-[А-ЯA-Z\d-]+|ПЛЦ[-\d]+|REC[-\d]+)/i);
-    if (!recipeCode && codeMatch) recipeCode = codeMatch[1];
+    // Название рецепта — первая осмысленная строка, но НЕ наименование завода-
+    // заказчика (ОАО/ООО/«…комбинат хлебопродуктов»), иначе в списке вместо кода
+    // рецепта показывался «ОАО Полоцкий комбинат хлебопродуктов».
+    if (!recipeName && line.length > 4 && !/^\d/.test(line) && !isOrgName(line)) {
+      recipeName = line.slice(0, 120);
+    }
+    if (!recipeCode) recipeCode = extractRecipeCode(line);
     const dateMatch = line.match(/(\d{2}[.\-\/]\d{2}[.\-\/]\d{2,4})/);
     if (dateMatch) recipeDate = dateMatch[1];
     if (!batchKg) {
@@ -299,4 +303,32 @@ export function parseRecipeExcel(buffer: Buffer): {
     batchKg: batchKg || 1000,
     rows: recipeRows,
   };
+}
+
+/** Похоже ли на наименование завода-заказчика, а не рецепта. */
+export function isOrgName(s: string): boolean {
+  return /(^|\s)(ОАО|ООО|ЗАО|ОДО|УП|ЧУП|ИП)\b|комбинат|хлебопродукт|агрокомбинат|птицефабрик|свинокомпл|райагро/i.test(s);
+}
+
+/**
+ * Достаёт код рецепта (напр. «Д-П60-3/Б20/ПЛЦ-113») из произвольной строки —
+ * текстового слоя документа ИЛИ имени файла. Код начинается с «Д-», содержит
+ * сегменты через «/» (в файле — через «_» или пробел) и оканчивается на «…Ц-NNN».
+ * Старый regex обрывался на «/» и терял хвост кода.
+ */
+export function extractRecipeCode(s: string): string {
+  if (!s) return "";
+  const m = s.match(/Д-[А-Яа-яЁёA-Z0-9 _\/-]*?Ц-?\s*\d+/i);
+  return m ? m[0].trim() : "";
+}
+
+/**
+ * Код рецепта из имени файла: «Д-П60-3_Б20_ПЛЦ-155.xlsx» → «Д-П60-3/Б20/ПЛЦ-155».
+ * Имена файлов на этом проекте именуются по коду рецепта, поэтому это надёжный
+ * запасной источник, когда код не вытащился из содержимого Excel.
+ */
+export function recipeCodeFromFilename(filename: string): string {
+  const base = (filename || "").replace(/\.[a-z0-9]+$/i, "");
+  const code = extractRecipeCode(base);
+  return code ? code.replace(/[ _]+/g, "/").replace(/\/{2,}/g, "/") : "";
 }

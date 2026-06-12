@@ -13,4 +13,5 @@
 - [Resolve unmatched recipe lines](resolve-unmatched-recipe-lines.md) — recipe parse is NOT live; adding an alias only fixes FUTURE uploads. To fix a current recipe: patch RecipeLines (col C uid, col L matched) + append Need; confirm endpoint touches neither.
 - [Recipe price-per-kg rule](recipe-price-per-kg-rule.md) — INVERTED: price>0 = our material (procurement/списание); price=0 = plant (excluded); null = ours. isPlant = ===0 only. Excel «цена» col collides with «кг» qty detection.
 - [Recipe lifecycle «План→Факт» + deficit](recipe-lifecycle-deficit.md) — рецепты не удаляются, статус (всё кроме «отменён») = потребление; нехватка НЕ блокирует (минус→сигнал закупки); переход POST /recipes/:uid/status.
+- [Источник кода рецепта](recipe-code-source.md) — рецепт опознают по коду Д-…/ПЛЦ-NNN; в Excel кода в шапке нет, фолбэк — имя файла; не брать ОАО/завод как name; в UI код основной строкой.
 - [Google Sheets rate limit throttle](sheets-rate-limit.md) — Sheets ~10 req/s/repl; dashboard Promise.all + stock-вкладки + polling дают бурст 11–13→429→500; все вызовы через acquireSlot (≤8 RPS)+ретрай; кэш не спасает (холодный бурст).

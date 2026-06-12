@@ -96,7 +96,7 @@ export default function RecipesTab({
 
   const editTons = async (r: Recipe) => {
     const input = prompt(
-      `Новая выработка (т) для «${r.full_name || r.code || r.recipe_uid}». Текущая: ${r.batch_t}.\n` +
+      `Новая выработка (т) для «${r.code || r.full_name || r.recipe_uid}». Текущая: ${r.batch_t}.\n` +
       `Расход и потребность пересчитаются. Нехватка склада не блокирует — остаток может уйти в минус.`,
       String(r.batch_t || ''),
     );
@@ -186,8 +186,10 @@ export default function RecipesTab({
                     onChange={() => toggle(r.recipe_uid)} />
                 </td>
                 <td className="px-3 py-1.5">
-                  <div className="text-white">{r.full_name || r.code || r.recipe_uid}</div>
-                  {r.code && <div className="text-xs text-gray-500">{r.code}</div>}
+                  <div className="text-white">{r.code || r.full_name || r.recipe_uid}</div>
+                  {r.full_name && r.full_name !== r.code && (
+                    <div className="text-xs text-gray-500">{r.full_name}</div>
+                  )}
                 </td>
                 <td className="px-3 py-1.5 text-gray-400">{r.date || '—'}</td>
                 <td className="px-3 py-1.5 text-right text-gray-300">{r.batch_t ? fmt(r.batch_t) : '—'}</td>
