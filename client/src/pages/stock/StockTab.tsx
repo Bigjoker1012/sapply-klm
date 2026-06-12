@@ -1,4 +1,4 @@
-import { LiveStockRow, fmt, SIGNAL_LABEL, SIGNAL_STYLE } from './types';
+import { LiveStockRow, fmt, fmt3, SIGNAL_LABEL, SIGNAL_STYLE } from './types';
 
 export default function StockTab({ live, loading }: { live: LiveStockRow[]; loading: boolean }) {
   return (
@@ -26,7 +26,7 @@ export default function StockTab({ live, loading }: { live: LiveStockRow[]; load
                 <td className="px-3 py-1.5">{r.name}</td>
                 <td className="px-3 py-1.5 text-right text-gray-400">{fmt(r.plant_qty)}</td>
                 <td className="px-3 py-1.5 text-right text-gray-400">{fmt(r.lip_qty)}</td>
-                <td className="px-3 py-1.5 text-right text-yellow-300">{r.consumed ? '−' + fmt(r.consumed) : '—'}</td>
+                <td className="px-3 py-1.5 text-right text-yellow-300">{r.consumed ? '−' + fmt3(r.consumed) : '—'}</td>
                 <td className={`px-3 py-1.5 text-right font-semibold ${r.available < 0 ? 'text-red-400' : 'text-white'}`}>{fmt(r.available)}</td>
                 <td className="px-3 py-1.5">
                   {r.signal === 'ok' ? (

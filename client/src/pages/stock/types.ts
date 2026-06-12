@@ -43,6 +43,14 @@ export interface Snapshot {
 export const fmt = (n: number) =>
   (Math.round((n + Number.EPSILON) * 100) / 100).toLocaleString('ru-RU');
 
+// Формат с тремя знаками после запятой (для графы «Списано» на остатках —
+// списание считается с мех. потерями, нужна точность до грамма).
+export const fmt3 = (n: number) =>
+  (Math.round((n + Number.EPSILON) * 1000) / 1000).toLocaleString('ru-RU', {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+  });
+
 export const SHEET_LABEL: Record<string, string> = {
   PlantStock: 'Полоцк',
   LipStock: 'Липковская',
