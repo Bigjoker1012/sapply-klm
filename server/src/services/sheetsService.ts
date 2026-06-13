@@ -817,6 +817,11 @@ export async function writePlantStock(rows: { raw_uid: string; name_from_source:
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+// Списание/расход храним и показываем с точностью до 3 знаков (норма сырья
+// доходит до долей грамма). round2 на КАЖДОМ шаге суммирования раздувал итог
+// (0,73+0,405=1,135→1,14 вместо 1,137), поэтому потребление суммируем «сырым»
+// и округляем один раз в конце через round3.
+function round3(n: number): number { return Math.round((n + Number.EPSILON) * 1000) / 1000; }
 
 /**
  * Нормализует значение колонки даты-снимка к ISO «YYYY-MM-DD».
@@ -1340,8 +1345,9 @@ export async function getRecipeConsumptionByStatus(statuses: Set<string>): Promi
     const rawUid = String(r[2] || "");
     if (!recUid || !rawUid) continue;
     if (!statuses.has(statusByRecipe.get(recUid) || "")) continue;
-    map.set(rawUid, round2((map.get(rawUid) || 0) + parseNum(r[7])));
+    map.set(rawUid, (map.get(rawUid) || 0) + parseNum(r[7]));
   }
+  for (const [k, v] of map) map.set(k, round3(v));
   return map;
 }
 
@@ -1421,11 +1427,11 @@ export async function getStockDeficit(): Promise<Array<{
     if (!info || !STOCK_CONSUMING_STATUSES.has(info.status)) continue;
     const qty = parseNum(r[7]);
     if (!(qty > 0)) continue;
-    consumed.set(rawUid, round2((consumed.get(rawUid) || 0) + qty));
+    consumed.set(rawUid, (consumed.get(rawUid) || 0) + qty);
     let byRec = contribByRaw.get(rawUid);
     if (!byRec) { byRec = new Map(); contribByRaw.set(rawUid, byRec); }
     const cur = byRec.get(recUid);
-    if (cur) cur.qty = round2(cur.qty + qty);
+    if (cur) cur.qty = cur.qty + qty;
     else byRec.set(recUid, { recipe_name: info.name, status: info.status, qty });
   }
   const uids = new Set<string>([...plant.keys(), ...lip.keys(), ...consumed.keys()]);
@@ -1437,11 +1443,11 @@ export async function getStockDeficit(): Promise<Array<{
     const base = round2(plant_qty + lip_qty);
     const cons = consumed.get(uid) || 0;
     const contributors = [...(contribByRaw.get(uid)?.entries() || [])]
-      .map(([recipe_uid, c]) => ({ recipe_uid, ...c }))
+      .map(([recipe_uid, c]) => ({ recipe_uid, ...c, qty: round3(c.qty) }))
       .sort((a, b) => b.qty - a.qty);
     out.push({
       raw_uid: uid, name: nameByUid.get(uid) || uid,
-      plant_qty, lip_qty, base, consumed: cons, available: round2(base - cons),
+      plant_qty, lip_qty, base, consumed: round3(cons), available: round2(base - cons),
       signal: stockSignal(plant_qty, lip_qty, cons), contributors,
     });
   }
