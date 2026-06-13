@@ -807,7 +807,7 @@ export async function writePlantStock(rows: { raw_uid: string; name_from_source:
   const today = new Date().toISOString().split("T")[0];
   // Clear today's entries first to avoid duplicates
   const existing = await readRange("PlantStock", "A2:G5000");
-  const keepRows = existing.filter(r => r[0] !== today);
+  const keepRows = existing.filter(r => toIsoSnapshotDate(r[0]) !== today);
   await clearRange("PlantStock", "A2:G5000");
   if (keepRows.length) await writeRange("PlantStock", `A2:G${keepRows.length + 1}`, keepRows);
 
@@ -817,6 +817,30 @@ export async function writePlantStock(rows: { raw_uid: string; name_from_source:
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+/**
+ * Нормализует значение колонки даты-снимка к ISO «YYYY-MM-DD».
+ *
+ * При valueInputOption=USER_ENTERED Google Sheets распознаёт записанную
+ * ISO-строку как дату и в зависимости от формата ячейки при чтении может
+ * вернуть её как ПОРЯДКОВЫЙ НОМЕР Excel (например «46185» = 2026-06-11).
+ * Из-за этого строгая проверка ISO_DATE отбрасывала весь снимок, и остатки
+ * (Полоцк) не отображались. Принимаем оба варианта: готовую ISO-строку и
+ * серийный номер Excel в разумном диапазоне дат.
+ */
+function toIsoSnapshotDate(raw: any): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (ISO_DATE.test(s)) return s;
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const serial = Math.floor(parseFloat(s));
+    if (serial >= 30000 && serial <= 60000) {
+      const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+      if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+    }
+  }
+  return "";
+}
 
 /**
  * Суммирует остатки ТОЛЬКО по последнему снимку склада.
@@ -831,13 +855,13 @@ function round2(n: number): number { return Math.round((n + Number.EPSILON) * 10
 function sumLatestSnapshot(rows: any[][], qtyOf: (r: any[]) => number): Map<string, number> {
   let maxDate = "";
   for (const r of rows) {
-    const d = String(r[0] || "").trim();
-    if (ISO_DATE.test(d) && d > maxDate) maxDate = d;
+    const d = toIsoSnapshotDate(r[0]);
+    if (d && d > maxDate) maxDate = d;
   }
   const map = new Map<string, number>();
   if (!maxDate) return map;
   for (const r of rows) {
-    if (String(r[0] || "").trim() !== maxDate) continue;
+    if (toIsoSnapshotDate(r[0]) !== maxDate) continue;
     if (!r[1]) continue;
     const uid = String(r[1]);
     map.set(uid, round2((map.get(uid) || 0) + qtyOf(r)));
@@ -867,12 +891,12 @@ export async function writeLipStock(
   // последнем снимке (списанные/отсутствующие позиции не воскрешаем).
   let maxDate = "";
   for (const r of existing) {
-    const d = String(r[0] || "").trim();
-    if (ISO_DATE.test(d) && d > maxDate) maxDate = d;
+    const d = toIsoSnapshotDate(r[0]);
+    if (d && d > maxDate) maxDate = d;
   }
   const snapshot: any[][] = [];
   for (const r of existing) {
-    if (String(r[0] || "").trim() !== maxDate) continue;
+    if (toIsoSnapshotDate(r[0]) !== maxDate) continue;
     const uid = String(r[1] || "");
     if (!uid || uid === raw_uid) continue;
     snapshot.push([today, uid, r[2], r[3], r[4], r[5], r[6] || "кг", r[7] || "", "FALSE"]);
@@ -881,8 +905,8 @@ export async function writeLipStock(
 
   // Историю (старые даты) сохраняем, сверху кладём полный снимок на сегодня.
   const history = existing.filter(r => {
-    const d = String(r[0] || "").trim();
-    return ISO_DATE.test(d) && d !== today;
+    const d = toIsoSnapshotDate(r[0]);
+    return !!d && d !== today;
   });
   const allRows = [...history, ...snapshot];
   // Безопасная замена: СНАЧАЛА пишем данные, ПОТОМ подчищаем хвост старых строк.
@@ -912,7 +936,7 @@ export async function writeLipStockBatch(
   // (а не только пришедшие uid), иначе повторная загрузка с меньшим набором
   // позиций оставит «висеть» устаревшие строки. Старые даты — история.
   const existing = await readRange("LipStock", "A2:I5000");
-  const keepRows = existing.filter(r => r[0] !== today);
+  const keepRows = existing.filter(r => toIsoSnapshotDate(r[0]) !== today);
   const newRows = rows.map(r => [today, r.raw_uid, r.name_from_source, r.qty, 0, r.qty, "кг", r.source, "FALSE"]);
   const allRows = [...keepRows, ...newRows];
   // Безопасная замена: сначала запись, затем подчистка хвоста (см. writeLipStock),
@@ -942,7 +966,7 @@ export async function writeLipBatchesBulk(
   const today = new Date().toISOString().split("T")[0];
   let existing: any[][] = [];
   try { existing = await readRange("LipBatches", "A2:G5000"); } catch {}
-  const keepRows = existing.filter(r => r[0] !== today);
+  const keepRows = existing.filter(r => toIsoSnapshotDate(r[0]) !== today);
   const newRows = rows.map(r => [today, r.raw_uid, r.batch_code, r.vendor_name, r.qty, "кг", r.source]);
   const allRows = [...keepRows, ...newRows];
   // Безопасная замена: сначала запись, затем подчистка хвоста (см. writeLipStock),
@@ -978,7 +1002,8 @@ export async function getLatestLipBatchStock(): Promise<Map<string, number>> {
     for (const r of rows) {
       if (!r[1]) continue;
       const uid = String(r[1]);
-      const date = String(r[0] || "");
+      const date = toIsoSnapshotDate(r[0]);
+      if (!date) continue;
       const qty = parseNum(r[4]);
       const cur = byUid.get(uid);
       if (!cur) {
@@ -1439,8 +1464,8 @@ export async function getStockSnapshots(): Promise<Array<{
   const agg = new Map<string, { sheet: string; date: string; rows: number; qty: number; source: string }>();
   const add = (sheet: string, rows: any[][], qtyIdx: number, srcIdx: number) => {
     for (const r of rows) {
-      const d = String(r[0] || "").trim();
-      if (!ISO_DATE.test(d)) continue;
+      const d = toIsoSnapshotDate(r[0]);
+      if (!d) continue;
       const key = sheet + "|" + d;
       const cur = agg.get(key) || { sheet, date: d, rows: 0, qty: 0, source: String(r[srcIdx] || "") };
       cur.rows++;
@@ -1462,7 +1487,8 @@ export async function deleteStockSnapshot(sheet: string, date: string): Promise<
   const range = sheet === "PlantStock" ? "A2:G5000" : "A2:I5000";
   const lastCol = sheet === "PlantStock" ? "G" : "I";
   const rows = await readRange(sheet, range);
-  const keep = rows.filter(r => String(r[0] || "").trim() !== date);
+  const target = toIsoSnapshotDate(date) || String(date || "").trim();
+  const keep = rows.filter(r => toIsoSnapshotDate(r[0]) !== target);
   const removed = rows.length - keep.length;
   if (removed === 0) return 0;
   await clearRange(sheet, range);

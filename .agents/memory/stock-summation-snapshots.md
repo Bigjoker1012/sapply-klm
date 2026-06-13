@@ -9,9 +9,27 @@ description: How PlantStock/LipStock totals must be computed (full-snapshot mode
 снимке (разные партии/проценты, напр. «0,21%» и «0,22%»).
 
 **Правило чтения остатков (getLatestPlantStock / getLatestLipStock):**
-взять строки ТОЛЬКО максимальной ISO-даты (`/^\d{4}-\d{2}-\d{2}$/`, мусорные/
-пустые даты игнорировать), и СУММИРОВАТЬ qty по всем строкам каждого raw_uid в
-этом снимке. См. `sumLatestSnapshot()` в sheetsService.ts.
+взять строки ТОЛЬКО максимальной даты, и СУММИРОВАТЬ qty по всем строкам каждого
+raw_uid в этом снимке. См. `sumLatestSnapshot()` в sheetsService.ts.
+
+**ВАЖНО — дата снимка может прийти как СЕРИЙНЫЙ НОМЕР Excel, не ISO.**
+`writePlantStock` пишет дату ISO-строкой, но Google Sheets при
+`valueInputOption=USER_ENTERED` распознаёт её как дату и (зависит от формата
+ячейки листа) при чтении отдаёт ПОРЯДКОВЫЙ номер Excel (напр. `46185` =
+2026-06-12). PlantStock этим страдал → строгая проверка `/^\d{4}-\d{2}-\d{2}$/`
+отбрасывала ВЕСЬ снимок → `sumLatestSnapshot` пуст → колонка Полоцк пустая, хотя
+парс (58 строк) и matchBatch (58/58) исправны. LipStock тот же код, но его
+ячейки отдают ISO — формат ячейки решает, а не код.
+**Фикс:** хелпер `toIsoSnapshotDate(raw)` принимает ISO ИЛИ серийный номер Excel
+(диапазон 30000–60000, эпоха `Date.UTC(1899,11,30)`) → ISO. Применять его на
+КАЖДОМ чтении/сравнении колонки даты снимка: `sumLatestSnapshot`,
+`getStockSnapshots`, фильтр «сегодня» в `writePlantStock`/`writeLipStockBatch`/
+`writeLipBatchesBulk`, carry-forward в `writeLipStock`, `getLatestLipBatchStock`,
+матч строк в `deleteStockSnapshot`. Чинит уже загруженные серийные данные БЕЗ
+перезагрузки. **Why:** если нормализовать только на чтении, а фильтр «сегодня»
+оставить строковым (`r[0] !== today`), повторная загрузка в тот же день НЕ
+затрёт старые строки (серийная today ≠ ISO today) → двойной счёт после
+нормализации чтения.
 
 **Why:** старый код делал `map.set(uid, qty)` — last-write-wins по ВСЕМ датам.
 Это (1) брало одну строку вместо суммы (Хром 25+12,55 показывал 12,6) и
