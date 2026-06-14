@@ -40,7 +40,7 @@ export function Dashboard() {
             <div className="flex items-center gap-2 text-teal-400">
               <Boxes className="size-6" />
               <div>
-                <div className="font-bold text-slate-100 text-sm leading-tight tracking-tight">Sapply KLM</div>
+                <div className="font-bold text-slate-100 text-sm leading-tight tracking-tight">Supply KLM</div>
                 <div className="text-[10px] text-slate-400 leading-tight">Полоцкий КХП</div>
               </div>
             </div>

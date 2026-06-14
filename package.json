@@ -1,5 +1,5 @@
 {
-  "name": "sapply-klm",
+  "name": "supply-klm",
   "version": "1.0.0",
   "description": "ERP для управления снабжением сырьём KLM",
   "main": "dist/server/src/index.js",

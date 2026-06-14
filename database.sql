@@ -1,4 +1,4 @@
--- SAPPLY-KLM | База данных
+-- SUPPLY-KLM | База данных
 -- Запуск: sudo -u postgres psql < database.sql
 
 CREATE DATABASE erp_supply;
