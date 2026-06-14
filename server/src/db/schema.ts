@@ -1,5 +1,5 @@
 /**
- * Supply KLM — схема БД (Drizzle ORM + PostgreSQL)
+ * Sapply KLM — схема БД (Drizzle ORM + PostgreSQL)
  *
  * Соглашения:
  * - Английские snake_case имена в БД. Русские названия — в JSDoc-комментариях.

@@ -726,7 +726,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
       {/* ─── HEADER ─── */}
       <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex justify-between items-center">
         <div className="flex items-center gap-3">
-          <span className="text-lg font-bold text-white">Supply KLM</span>
+          <span className="text-lg font-bold text-white">Sapply KLM</span>
           <span className="text-xs text-gray-500 border border-gray-700 rounded px-2 py-0.5">Полоцк КХП · Премиксы</span>
         </div>
         <div className="flex items-center gap-4 text-sm text-gray-400">
