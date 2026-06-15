@@ -504,6 +504,23 @@ function normExcl(s: string): string {
 }
 
 /**
+ * Слова-маркеры «не сырьё для премиксов» — жидкие/нетоварные формы (растворы,
+ * жидкости и т.п.). Позиции с такими словами исключаются из остатков Липковской.
+ * Список намеренно вынесен отдельно — его легко расширять новыми словами.
+ */
+const NON_RAW_LIP_KEYWORDS = ["раствор", "жидк"];
+
+/**
+ * true, если позиция Липковской — не сырьё для премиксов (жидкая форма и т.п.)
+ * и должна быть исключена из остатков. Сравнение по подстроке (регистронезависимо),
+ * поэтому «жидк» ловит жидкий/жидкая/жидкость/жидкое.
+ */
+export function isExcludedLipPosition(name: string): boolean {
+  const n = normExcl(name);
+  return NON_RAW_LIP_KEYWORDS.some(k => n.includes(k));
+}
+
+/**
  * Фильтр «похоже на сырьё/добавку» — ТОЛЬКО для КД Липковской. В КД много
  * мусора (хозтовары, запчасти, тара), который сырьём не является. Оставляем в
  * распознавании лишь те позиции, что похожи на что-то из эталонного корпуса:
@@ -1060,7 +1077,13 @@ export async function deleteAnalog(id: string): Promise<void> {
 
 export async function getLatestLipStock(): Promise<Map<string, number>> {
   const rows = await readRange("LipStock", "A2:I5000");
+  // Max-дату снимка определяет sumLatestSnapshot по ВСЕМ строкам (полный снимок).
+  // Жидкие/нетоварные позиции (раствор, жидкий и т.п.) — не сырьё для премиксов:
+  // даём им вклад 0 ВНУТРИ последнего снимка, а не вырезаем строки заранее —
+  // иначе снимок, где такие позиции единственные, откатил бы дату на старую
+  // (фантомные остатки).
   return sumLatestSnapshot(rows, r => {
+    if (isExcludedLipPosition(String(r[2] || ""))) return 0;
     const free = parseNum(r[5]);
     return free > 0 ? free : Math.max(0, parseNum(r[3]) - parseNum(r[4]));
   });
@@ -1068,7 +1091,7 @@ export async function getLatestLipStock(): Promise<Map<string, number>> {
 
 export async function getLipStockList(): Promise<any[]> {
   const rows = await readRange("LipStock", "A2:I5000");
-  return rows.filter(r => r[0]).map(r => ({
+  return rows.filter(r => r[0] && !isExcludedLipPosition(String(r[2] || ""))).map(r => ({
     snapshot_date: r[0], raw_uid: r[1], name_from_source: r[2],
     qty_on_hand: parseNum(r[3]), reserved_qty: parseNum(r[4]),
     free_qty: parseNum(r[5]), unit: r[6], source: r[7],
