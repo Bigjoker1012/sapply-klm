@@ -34,7 +34,7 @@ const STATUS_META: Record<Signal, { label: string; cls: string }> = {
 };
 
 /**
- * Коэф-т потребности = наличие / среднемес. расход; итог = коэф-т потребности ×
+ * Коэф-т потребности = наличие / среднемес. расход; итог = коэф-т потребности /
  * ручной коэф-т. Статус: >1,5 норма, 1–1,5 контроль, 0,6–1 закупка, <0,6 срочная.
  * Без введённого расхода статус не считаем («—»).
  */
@@ -42,7 +42,7 @@ function analyze(r: PlanRow): { need: number | null; final: number | null; statu
   const avg = r.manual_input ? r.manual_avg_usage : null;
   if (avg === null || !(avg > 0)) return { need: null, final: null, status: 'unknown' };
   const need = r.qty_today / avg;
-  const final = need * (r.coefficient || 1);
+  const final = need / (r.coefficient || 1);
   let status: Signal;
   if (final > 1.5) status = 'ok';
   else if (final > 1.0) status = 'control';
@@ -139,7 +139,7 @@ export default function Planning({ onBack }: { onBack: () => void }) {
         не вычитаются — их расход уже в загруженном остатке). Включите «Ручной ввод»
         и укажите среднемесячный расход — статус считается так:
         <span className="text-gray-300"> коэф-т потребности = наличие ÷ расход</span>,
-        затем × ручной коэф-т (запас под срок поставки, по умолчанию 1).
+        затем ÷ ручной коэф-т (запас под срок поставки, по умолчанию 1).
         Итог: <span className="text-green-400">&gt;1,5 норма</span>,
         {' '}<span className="text-yellow-400">1–1,5 контроль</span>,
         {' '}<span className="text-orange-400">0,6–1 к закупке</span>,
