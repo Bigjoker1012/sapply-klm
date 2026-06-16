@@ -4,15 +4,23 @@ import ListPageShell from '../components/ListPageShell';
 
 const API = '/api';
 
+type Signal = 'ok' | 'control' | 'buy' | 'urgent' | 'none';
+
 interface PlanRow {
   raw_uid: string;
   name: string;
   unit: string;
   qty_today: number;
+  inbound_qty: number;
   avg_monthly_usage: number | null;
   coefficient: number;
   manual_input: boolean;
   manual_avg_usage: number | null;
+  // Статус и коэффициенты считает сервер (services/planningStatus.ts), тот же
+  // расчёт, что и светофор «Главной» — фронт ничего не пересчитывает.
+  need_ratio: number | null;
+  final: number | null;
+  status: Signal;
 }
 
 /** Ручной коэф-т (запас под срок поставки): 1,0 … 2,0 */
@@ -23,33 +31,13 @@ const fmt = (n: number | null | undefined) =>
   n === null || n === undefined || Number.isNaN(n) ? '—' : nf.format(n);
 const fmtCoef = (n: number) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
 
-type Signal = 'ok' | 'control' | 'buy' | 'urgent' | 'unknown';
-
 const STATUS_META: Record<Signal, { label: string; cls: string }> = {
   ok:      { label: 'Норма',           cls: 'bg-green-500/15 text-green-400 border-green-500/30' },
   control: { label: 'Контроль',        cls: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' },
   buy:     { label: 'К закупке',       cls: 'bg-orange-500/15 text-orange-400 border-orange-500/30' },
   urgent:  { label: 'Срочная закупка', cls: 'bg-red-500/15 text-red-400 border-red-500/30' },
-  unknown: { label: '—',               cls: 'text-gray-600 border-transparent' },
+  none:    { label: '—',               cls: 'text-gray-600 border-transparent' },
 };
-
-/**
- * Коэф-т потребности = наличие / среднемес. расход; итог = коэф-т потребности /
- * ручной коэф-т. Статус: >1,5 норма, 1–1,5 контроль, 0,6–1 закупка, <0,6 срочная.
- * Без введённого расхода статус не считаем («—»).
- */
-function analyze(r: PlanRow): { need: number | null; final: number | null; status: Signal } {
-  const avg = r.manual_input ? r.manual_avg_usage : null;
-  if (avg === null || !(avg > 0)) return { need: null, final: null, status: 'unknown' };
-  const need = r.qty_today / avg;
-  const final = need / (r.coefficient || 1);
-  let status: Signal;
-  if (final > 1.5) status = 'ok';
-  else if (final > 1.0) status = 'control';
-  else if (final >= 0.6) status = 'buy';
-  else status = 'urgent';
-  return { need, final, status };
-}
 
 export default function Planning({ onBack }: { onBack: () => void }) {
   const [rows, setRows] = useState<PlanRow[]>([]);
@@ -120,6 +108,33 @@ export default function Planning({ onBack }: { onBack: () => void }) {
     save(r.raw_uid, { manual_avg_usage: r.manual_avg_usage });
   };
 
+  // Переключатель «В пути»: ВКЛ → спрашиваем количество и создаём приход
+  // (POST /api/in-transit), ВЫКЛ → отменяем все приходы этого сырья. После
+  // изменения перезагружаем страницу, чтобы пересчитались остаток/статус.
+  const onInTransitToggle = async (r: PlanRow, checked: boolean) => {
+    try {
+      if (checked) {
+        const ans = window.prompt(`Количество «в пути» для «${r.name}» (${r.unit}):`, '');
+        if (ans === null) return;
+        const qty = parseFloat(ans.replace(',', '.'));
+        if (!Number.isFinite(qty) || qty <= 0) {
+          setError('Введите положительное количество');
+          return;
+        }
+        await axios.post(`${API}/in-transit`, {
+          raw_uid: r.raw_uid,
+          raw_name: r.name,
+          quantity: qty,
+        });
+      } else {
+        await axios.delete(`${API}/in-transit/by-material/${encodeURIComponent(r.raw_uid)}`);
+      }
+      await load();
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Не удалось изменить «в пути»');
+    }
+  };
+
   const q = search.trim().toLowerCase();
   const filtered = q
     ? rows.filter(r => r.name.toLowerCase().includes(q) || r.raw_uid.toLowerCase().includes(q))
@@ -144,6 +159,8 @@ export default function Planning({ onBack }: { onBack: () => void }) {
         {' '}<span className="text-yellow-400">1–1,5 контроль</span>,
         {' '}<span className="text-orange-400">0,6–1 к закупке</span>,
         {' '}<span className="text-red-400">&lt;0,6 срочная закупка</span>.
+        Для позиций «к закупке»/«срочная» включите «В пути» и укажите заказанное
+        количество — оно попадёт в остатки.
       </p>
 
       <input
@@ -164,12 +181,14 @@ export default function Planning({ onBack }: { onBack: () => void }) {
               <th className="px-3 py-2 font-medium text-center">Ручной коэф-т</th>
               <th className="px-3 py-2 font-medium text-right">Коэф-т потребности</th>
               <th className="px-3 py-2 font-medium text-center">Статус</th>
+              <th className="px-3 py-2 font-medium text-center">В пути</th>
               <th className="px-3 py-2 font-medium text-center">Ручной ввод</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map(r => {
-              const a = analyze(r);
+              const needPurchase = r.status === 'buy' || r.status === 'urgent';
+              const inTransit = r.inbound_qty > 0;
               return (
                 <tr key={r.raw_uid} className="border-t border-gray-800 hover:bg-gray-900/50">
                   <td className="px-3 py-2">
@@ -207,19 +226,36 @@ export default function Planning({ onBack }: { onBack: () => void }) {
                     </select>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {a.final === null ? (
+                    {r.final === null ? (
                       <span className="text-gray-600">—</span>
                     ) : (
                       <div>
-                        <div className="text-gray-200">{fmt(a.final)}</div>
-                        <div className="text-xs text-gray-500">потребн. {fmt(a.need)}</div>
+                        <div className="text-gray-200">{fmt(r.final)}</div>
+                        <div className="text-xs text-gray-500">потребн. {fmt(r.need_ratio)}</div>
                       </div>
                     )}
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block rounded border px-2 py-0.5 text-xs whitespace-nowrap ${STATUS_META[a.status].cls}`}>
-                      {STATUS_META[a.status].label}
+                    <span className={`inline-block rounded border px-2 py-0.5 text-xs whitespace-nowrap ${STATUS_META[r.status].cls}`}>
+                      {STATUS_META[r.status].label}
                     </span>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {needPurchase || inTransit ? (
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={inTransit}
+                          onChange={e => onInTransitToggle(r, e.target.checked)}
+                          className="w-4 h-4 accent-blue-500 cursor-pointer"
+                        />
+                        {inTransit && (
+                          <span className="text-xs text-blue-300 tabular-nums">{fmt(r.inbound_qty)}</span>
+                        )}
+                      </label>
+                    ) : (
+                      <span className="text-gray-700">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-center">
                     <input
@@ -234,7 +270,7 @@ export default function Planning({ onBack }: { onBack: () => void }) {
             })}
             {filtered.length === 0 && !loading && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-gray-500">
+                <td colSpan={8} className="px-3 py-6 text-center text-gray-500">
                   {rows.length === 0 ? 'Нет позиций для планирования.' : 'Ничего не найдено.'}
                 </td>
               </tr>

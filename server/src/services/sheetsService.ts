@@ -127,42 +127,57 @@ async function sheetGet(path: string) {
   }
 }
 
+/**
+ * Запись через прокси (ReplitConnectors) НЕ бросает на 429/4xx/5xx — отдаёт тело
+ * {error:{...}}. Если вернуть его как «успех», writeRange/appendRows молча
+ * «успешно» НЕ запишут (фантомный успех под рейт-лимитом). Поэтому, как и
+ * sheetGet/readRange: ретраим временный лимит и БРОСАЕМ на остальных ошибках.
+ */
+async function proxyWrite(method: "POST" | "PUT", path: string, body: object) {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ReplitConnectors } = require("@replit/connectors-sdk");
+  for (let attempt = 0; ; attempt++) {
+    await acquireSlot();
+    const r = await new ReplitConnectors().proxy("google-sheet", path, {
+      method,
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await r.json();
+    if (data && data.error) {
+      if (isRateLimited(data.error) && attempt < MAX_RETRIES) {
+        await sleep(250 * (attempt + 1) ** 2);
+        continue;
+      }
+      const e = data.error;
+      throw new Error(`Sheets ${method} ${path} → ${e.code ?? ""} ${e.status ?? ""} ${e.message ?? JSON.stringify(e)}`.trim());
+    }
+    return data;
+  }
+}
+
 async function sheetPost(path: string, body: object) {
-  await acquireSlot();
   if (GOOGLE_SA_JSON) {
+    await acquireSlot();
     const auth = await getAuthHeader();
     const { data } = await axios.post(`${SHEETS_BASE}${path}`, body, {
       headers: { Authorization: auth, "Content-Type": "application/json" },
     });
     return data;
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { ReplitConnectors } = require("@replit/connectors-sdk");
-  const r = await new ReplitConnectors().proxy("google-sheet", path, {
-    method: "POST",
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
-  });
-  return r.json();
+  return proxyWrite("POST", path, body);
 }
 
 async function sheetPut(path: string, body: object) {
-  await acquireSlot();
   if (GOOGLE_SA_JSON) {
+    await acquireSlot();
     const auth = await getAuthHeader();
     const { data } = await axios.put(`${SHEETS_BASE}${path}`, body, {
       headers: { Authorization: auth, "Content-Type": "application/json" },
     });
     return data;
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { ReplitConnectors } = require("@replit/connectors-sdk");
-  const r = await new ReplitConnectors().proxy("google-sheet", path, {
-    method: "PUT",
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
-  });
-  return r.json();
+  return proxyWrite("PUT", path, body);
 }
 
 export async function readRange(sheet: string, range: string): Promise<any[][]> {
@@ -1135,6 +1150,26 @@ export async function deleteInbound(id: string): Promise<void> {
   await updateInboundStatus(id, "удалено");
 }
 
+/**
+ * Помечает «удалёнными» ВСЕ активные строки прихода по конкретному сырью —
+ * используется переключателем «В пути» на «Планировании» (выкл = позиция больше
+ * не в пути). Один проход + один writeRange (статусы колонкой G). Возвращает
+ * число помеченных строк.
+ */
+export async function deleteInboundByMaterial(raw_uid: string): Promise<number> {
+  const rows = await readRange("Inbound", "A2:H5000");
+  let changed = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const status = String(rows[i][6] || "").toLowerCase();
+    if (String(rows[i][1]) === raw_uid && status !== "получено" && status !== "удалено") {
+      rows[i][6] = "удалено";
+      changed++;
+    }
+  }
+  if (changed) await writeRange("Inbound", `A2:H${rows.length + 1}`, rows);
+  return changed;
+}
+
 export async function getInboundTotals(): Promise<Map<string, number>> {
   const rows = await readRange("Inbound", "A2:H5000");
   const map = new Map<string, number>();
@@ -1387,34 +1422,40 @@ export async function getRecipeConsumptionByStatus(statuses: Set<string>): Promi
 }
 
 /**
- * «Живые остатки» = (Полоцк + Липковская, последний снимок) − потребление
- * рецептов во всех статусах, КРОМЕ отменённых (STOCK_CONSUMING_STATUSES).
- * У отменённого рецепта сырьё вернулось, поэтому не вычитается. Товары в пути
- * (Inbound) НЕ включаются — их учитываем только при заказе сырья.
+ * «Живые остатки» = (Полоцк + Липковская, последний снимок) + товары в пути
+ * (Inbound) − потребление рецептов во всех статусах, КРОМЕ отменённых
+ * (STOCK_CONSUMING_STATUSES). У отменённого рецепта сырьё вернулось, поэтому не
+ * вычитается. Товары «в пути» (заказанные через переключатель на «Планировании»)
+ * входят в доступный остаток как приход на Полоцк.
  */
 export async function getLiveStock(): Promise<Array<{
   raw_uid: string; name: string; plant_qty: number; lip_qty: number;
-  base: number; consumed: number; available: number;
+  inbound_qty: number; base: number; consumed: number; available: number;
   signal: "critical" | "transfer" | "ok";
 }>> {
-  const [plant, lip, consumed, catalog] = await Promise.all([
+  const [plant, lip, inbound, consumed, catalog] = await Promise.all([
     getLatestPlantStock(),
     getLatestLipStock(),
+    getInboundTotals(),
     getRecipeConsumptionByStatus(STOCK_CONSUMING_STATUSES),
     getAllRawMaterials(),
   ]);
   const nameByUid = new Map(catalog.map(m => [m.raw_uid, m.full_name]));
-  const uids = new Set<string>([...plant.keys(), ...lip.keys(), ...consumed.keys()]);
+  const uids = new Set<string>([...plant.keys(), ...lip.keys(), ...inbound.keys(), ...consumed.keys()]);
   const out = [];
   for (const uid of uids) {
     const plant_qty = plant.get(uid) || 0;
     const lip_qty = lip.get(uid) || 0;
+    const inbound_qty = inbound.get(uid) || 0;
     const base = round2(plant_qty + lip_qty);
     const cons = consumed.get(uid) || 0;
     out.push({
       raw_uid: uid, name: nameByUid.get(uid) || uid,
-      plant_qty, lip_qty, base, consumed: cons, available: round2(base - cons),
-      signal: stockSignal(plant_qty, lip_qty, cons),
+      plant_qty, lip_qty, inbound_qty, base,
+      consumed: cons, available: round2(base + inbound_qty - cons),
+      // Приход «в пути» считаем на стороне Полоцка (закрывает дефицит → меньше
+      // срочных сигналов и перебросок).
+      signal: stockSignal(plant_qty + inbound_qty, lip_qty, cons),
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name, "ru"));
@@ -1431,13 +1472,14 @@ export async function getLiveStock(): Promise<Array<{
  */
 export async function getStockDeficit(): Promise<Array<{
   raw_uid: string; name: string; plant_qty: number; lip_qty: number;
-  base: number; consumed: number; available: number;
+  inbound_qty: number; base: number; consumed: number; available: number;
   signal: "critical" | "transfer" | "ok";
   contributors: { recipe_uid: string; recipe_name: string; status: string; qty: number }[];
 }>> {
-  const [plant, lip, catalog, recipeRows, lineRows] = await Promise.all([
+  const [plant, lip, inbound, catalog, recipeRows, lineRows] = await Promise.all([
     getLatestPlantStock(),
     getLatestLipStock(),
+    getInboundTotals(),
     getAllRawMaterials(),
     readRange("Recipes", "A2:M5000"),
     readRange("RecipeLines", "A2:L5000"),
@@ -1475,6 +1517,7 @@ export async function getStockDeficit(): Promise<Array<{
   for (const uid of uids) {
     const plant_qty = plant.get(uid) || 0;
     const lip_qty = lip.get(uid) || 0;
+    const inbound_qty = inbound.get(uid) || 0;
     const base = round2(plant_qty + lip_qty);
     const cons = consumed.get(uid) || 0;
     const contributors = [...(contribByRaw.get(uid)?.entries() || [])]
@@ -1482,8 +1525,9 @@ export async function getStockDeficit(): Promise<Array<{
       .sort((a, b) => b.qty - a.qty);
     out.push({
       raw_uid: uid, name: nameByUid.get(uid) || uid,
-      plant_qty, lip_qty, base, consumed: round3(cons), available: round2(base - cons),
-      signal: stockSignal(plant_qty, lip_qty, cons), contributors,
+      plant_qty, lip_qty, inbound_qty, base,
+      consumed: round3(cons), available: round2(base + inbound_qty - cons),
+      signal: stockSignal(plant_qty + inbound_qty, lip_qty, cons), contributors,
     });
   }
   out.sort((a, b) =>

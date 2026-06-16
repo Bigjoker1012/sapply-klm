@@ -5,6 +5,7 @@ export interface LiveStockRow {
   name: string;
   plant_qty: number;
   lip_qty: number;
+  inbound_qty: number;
   base: number;
   consumed: number;
   available: number;

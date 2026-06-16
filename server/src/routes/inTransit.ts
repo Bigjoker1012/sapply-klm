@@ -1,9 +1,15 @@
 import { Router, Request, Response } from "express";
+import { requireAuth } from "../auth/middleware";
 import {
   addInbound, getInboundList, updateInboundStatus, deleteInbound,
+  deleteInboundByMaterial,
 } from "../services/sheetsService";
 
 const router = Router();
+
+// Все операции с «в пути» — только для авторизованных (как planning/recipes/
+// stock/dashboard). Эндпоинты меняют остатки, публичными быть не должны.
+router.use(requireAuth);
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
@@ -31,6 +37,18 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
   try {
     await updateInboundStatus(req.params.id, status);
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Отмена «в пути» по сырью — выключатель переключателя на «Планировании»
+// (помечает удалёнными все активные приходы этого материала). Объявлен ДО
+// "/:id", иначе ":id" перехватил бы путь "by-material".
+router.delete("/by-material/:raw_uid", async (req: Request, res: Response) => {
+  try {
+    const changed = await deleteInboundByMaterial(req.params.raw_uid);
+    res.json({ ok: true, changed });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

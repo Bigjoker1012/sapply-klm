@@ -3,9 +3,9 @@ name: writeRange/sheetPut swallow 429
 description: Sheets write helpers don't check the proxy error body, so writes can silently fail under rate limit
 ---
 
-`writeRange` / `appendRows` / `sheetPut` do NOT inspect the proxy response body, unlike `readRange` (which throws on `{error}`). Under a 429/RESOURCE_EXHAUSTED the PUT/POST is rejected but the helper still resolves and the caller logs "OK" — a false success. The data simply isn't written.
+FIXED: the proxy write path now routes through `proxyWrite()` which (like `sheetGet`) retries rate-limit and THROWS on any `{error}` body, so `sheetPost`/`sheetPut` (→ `writeRange`/`appendRows`/`addInbound`/`deleteInboundByMaterial`) no longer report phantom success. The direct-SA (`GOOGLE_SA_JSON`) path already threw via axios. Read-back is still a cheap belt-and-suspenders check but no longer mandatory for catching silent 429s.
 
-**Why:** during a burst of Sheets ops a single-cell write reported success but a fresh read (separate ts-node process = empty in-memory cache) showed the old value; nothing was corrupted, the write just never landed. Cost several wasted retry cycles chasing a phantom indexing/cache bug.
+**Why:** during a burst of Sheets ops a single-cell write reported success but a fresh read (separate ts-node process = empty in-memory cache) showed the old value; nothing was corrupted, the write just never landed. Cost several wasted retry cycles chasing a phantom indexing/cache bug. The original swallow happened because the proxy path returned `r.json()` (which can be `{error:{...}}`) as success without inspection.
 
 **How to apply:**
 - After any important Sheets write, read the cell back (in a calmer moment / separate call) to confirm persistence before trusting it.

@@ -19,14 +19,9 @@ import * as XLSX from "xlsx";
 import { db } from "../db/client";
 import { requireAuth } from "../auth/middleware";
 import {
-  getAllRawMaterials,
-  getLatestPlantStock,
-  getLatestLipStock,
-  getInboundTotals,
   getInboundList,
-  getRecipeConsumptionByStatus,
-  STOCK_CONSUMING_STATUSES,
 } from "../services/sheetsService";
+import { computePlanningRows, PlanningStatus } from "../services/planningStatus";
 
 const router = Router();
 
@@ -47,10 +42,19 @@ interface Decision {
   planned_need: number;
   available_total: number;
   expected_after_plan: number;
-  status: "Срочно к закупке" | "К закупке" | "На контроле" | "Норма";
+  status: "Срочно к закупке" | "К закупке" | "На контроле" | "Норма" | "Не задан";
   cover_by_transfer: number;
   cover_by_purchase: number;
 }
+
+/** Статус планирования → подпись светофора на «Главной». */
+const PLANNING_STATUS_RU: Record<PlanningStatus, Decision["status"]> = {
+  urgent: "Срочно к закупке",
+  buy: "К закупке",
+  control: "На контроле",
+  ok: "Норма",
+  none: "Не задан",
+};
 
 interface RawMaterialDto {
   raw_uid: string;
@@ -92,42 +96,6 @@ interface UnmatchedDto {
 // ──────────────────────────────────────────────────────────────────────────────
 // Запросы к БД
 // ──────────────────────────────────────────────────────────────────────────────
-
-/**
- * Активные позиции каталога + остатки (Полоцк/Липковская) + в пути + плановая
- * потребность по рецептам. Источник — Google Sheets, тот же, что у страницы
- * «Планирование закупок», чтобы цифры на «Главной» совпадали с реальностью.
- */
-async function loadAggregates() {
-  // Потребность берём из ЖИВОГО потребления рецептов (тот же источник, что и
-  // вкладка «Дефицит»: RecipeLines, отфильтрованные по списывающим статусам), а НЕ
-  // из листа Need — он пишется только при смене статуса/разборе и легко устаревает,
-  // из-за чего Главная показывала «Норма», пока «Дефицит» видел реальную нехватку.
-  const [catalog, plant, lip, inbound, need] = await Promise.all([
-    getAllRawMaterials(),
-    getLatestPlantStock(),
-    getLatestLipStock(),
-    getInboundTotals(),
-    getRecipeConsumptionByStatus(STOCK_CONSUMING_STATUSES),
-  ]);
-  const round2 = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
-  return catalog
-    .filter(m => m.active)
-    .map(m => ({
-      sku_id: 0,
-      raw_uid: m.raw_uid,
-      name: m.full_name,
-      unit: m.unit,
-      // Порогов закупки в варианте «простой светофор» нет — статус считаем
-      // по соотношению остатка и потребности рецептов (см. computeDecisions).
-      threshold_qty: 0,
-      min_stock_kg: 0,
-      plant_qty: round2(plant.get(m.raw_uid) || 0),
-      lip_qty: round2(lip.get(m.raw_uid) || 0),
-      inbound_qty: round2(inbound.get(m.raw_uid) || 0),
-      planned_need: round2(need.get(m.raw_uid) || 0),
-    }));
-}
 
 /** Полный список сырья для блока «справочник». */
 async function loadRawMaterials(): Promise<RawMaterialDto[]> {
@@ -248,58 +216,45 @@ const STATUS_ORDER: Record<Decision["status"], number> = {
   "К закупке": 1,
   "На контроле": 2,
   "Норма": 3,
+  "Не задан": 5,
 };
 
+/**
+ * Светофор «Главной» = статусы из «Планирования закупок» (единый расчёт
+ * services/planningStatus.ts): статус берём по ручному среднемес. расходу и
+ * коэф-ту, а НЕ по потребности рецептов. Где расход не задан — статус «Не задан»
+ * (позиция без светофора, в карточки не попадает). Так главная и «Планирование»
+ * всегда показывают один и тот же статус.
+ */
 async function computeDecisions(): Promise<Decision[]> {
-  const aggregates = await loadAggregates();
+  const rows = await computePlanningRows();
 
-  const decisions: Decision[] = aggregates.map(a => {
-    // Простой светофор (без ручных порогов): сравниваем фактический остаток на
-    // руках с потребностью рецептов.
-    const on_hand = a.plant_qty + a.lip_qty + a.inbound_qty;   // остаток + в пути
-    const need = a.planned_need;                               // потребность рецептов
+  const decisions: Decision[] = rows.map(r => {
+    const on_hand = r.plant_qty + r.lip_qty + r.inbound_qty;   // остаток + в пути
+    const need = r.planned_need;                               // потребность рецептов
     const available_total = on_hand;
     const expected_after_plan = on_hand - need;                // может быть < 0 (для таблицы)
 
     // Потребность закрываем сначала запасом самого Полоцка (+ его приход),
-    // затем перебросом с Липковской, и лишь остаток — закупкой. Липковская
-    // уже входит в on_hand, поэтому закупка = общий дефицит (need − on_hand),
-    // а переброска покрывает только нехватку Полоцка (без двойного учёта).
-    const polotsk_side = a.plant_qty + a.inbound_qty;
+    // затем перебросом с Липковской, и лишь остаток — закупкой.
+    const polotsk_side = r.plant_qty + r.inbound_qty;
     const polotsk_deficit = Math.max(0, need - polotsk_side);
-    const cover_by_transfer = Math.min(a.lip_qty, polotsk_deficit);
+    const cover_by_transfer = Math.min(r.lip_qty, polotsk_deficit);
     const cover_by_purchase = Math.max(0, need - on_hand);
 
-    /**
-     * Статус по расчётному коэффициенту k = наличие / расход (on_hand / need).
-     * Светофор остаётся СПРОСО-ориентированным: если рецепты позицию не требуют
-     * (need = 0), закупать нечего — это «Норма» при любом остатке.
-     *   🟢 Норма            — k > 1.5 (или need = 0)
-     *   🔵 На контроле      — 1.0 ≤ k ≤ 1.5
-     *   🟡 К закупке        — 0.6 ≤ k < 1.0
-     *   🔴 Срочно к закупке — k < 0.6 (в т.ч. on_hand = 0 → k = 0)
-     */
-    const EPS = 0.001;
-    const ratio = need > EPS ? on_hand / need : Infinity;
-    let status: Decision["status"];
-    if (need <= EPS) status = "Норма";
-    else if (ratio < 0.6) status = "Срочно к закупке";
-    else if (ratio < 1.0) status = "К закупке";
-    else if (ratio <= 1.5) status = "На контроле";
-    else status = "Норма";
-
     return {
-      raw_uid: a.raw_uid,
-      name: a.name,
-      avg_monthly_usage: 0, // см. TODO в loadRawMaterials
-      threshold_qty: a.threshold_qty,
-      plant_qty: a.plant_qty,
-      lip_qty: a.lip_qty,
-      inbound_qty: a.inbound_qty,
-      planned_need: a.planned_need,
+      raw_uid: r.raw_uid,
+      name: r.name,
+      // Светофор завязан на ручной среднемес. расход — показываем его в таблице.
+      avg_monthly_usage: r.avg_monthly_usage ?? 0,
+      threshold_qty: 0,
+      plant_qty: r.plant_qty,
+      lip_qty: r.lip_qty,
+      inbound_qty: r.inbound_qty,
+      planned_need: r.planned_need,
       available_total,
       expected_after_plan,
-      status,
+      status: PLANNING_STATUS_RU[r.status],
       cover_by_transfer,
       cover_by_purchase,
     };

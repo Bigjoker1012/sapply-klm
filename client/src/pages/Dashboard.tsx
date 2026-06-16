@@ -107,6 +107,7 @@ const STATUS_RU: Record<string, string> = {
   'К закупке': 'К закупке',
   'На контроле': 'На контроле',
   'Норма': 'Норма',
+  'Не задан': 'Не задан',
 };
 
 const statusColor: Record<string, string> = {
@@ -114,6 +115,7 @@ const statusColor: Record<string, string> = {
   'К закупке': 'text-yellow-400 font-semibold',
   'На контроле': 'text-blue-400 font-semibold',
   'Норма': 'text-green-400',
+  'Не задан': 'text-gray-500',
 };
 
 const rowBg: Record<string, string> = {
@@ -121,6 +123,7 @@ const rowBg: Record<string, string> = {
   'К закупке': 'bg-yellow-950/30',
   'На контроле': 'bg-blue-950/20',
   'Норма': '',
+  'Не задан': '',
 };
 
 const statusIcon: Record<string, string> = {
@@ -128,6 +131,7 @@ const statusIcon: Record<string, string> = {
   'К закупке': '🟡',
   'На контроле': '🔵',
   'Норма': '🟢',
+  'Не задан': '⚪',
 };
 
 /** Таблица монитора закупок — переиспользуется в основном экране и на странице списка по статусу. */
