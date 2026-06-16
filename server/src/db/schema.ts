@@ -587,15 +587,15 @@ export const documentArchive = pgTable("document_archive", {
 /**
  * Настройки планирования закупок по SKU. Среднемесячный расход авто пока НЕ
  * считаем (нет истории расхода) — значение вводится вручную при включённом
- * manualInput; иначе расход пустой. coefficient — коэффициент закупки (0.1–1).
- * Ключ — код SKU (= sku.code / raw_uid каталога). Строка создаётся лениво при
- * первом изменении настроек позиции.
+ * manualInput; иначе расход пустой. coefficient — «ручной коэф-т» (запас под срок
+ * поставки): 1.0–2.0, по умолчанию 1. Ключ — код SKU (= sku.code / raw_uid
+ * каталога). Строка создаётся лениво при первом изменении настроек позиции.
  */
 export const purchasePlanSetting = pgTable("purchase_plan_setting", {
   id: serial("id").primaryKey(),
   /** Код SKU (= sku.code / raw_uid каталога) */
   skuCode: text("sku_code").notNull().unique(),
-  /** Коэффициент закупки 0.1–1 */
+  /** Ручной коэф-т (запас под срок поставки) 1.0–2.0 */
   coefficient: doublePrecision("coefficient").notNull().default(1),
   /** Ручной ввод среднемесячного расхода */
   manualInput: boolean("manual_input").notNull().default(false),
