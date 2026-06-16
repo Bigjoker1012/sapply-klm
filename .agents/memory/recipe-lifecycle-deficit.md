@@ -7,16 +7,22 @@ description: How recipe statuses drive stock consumption and why shortage never 
 
 Recipes are NOT deleted on completion — they carry a status. Stock consumption is
 driven by status via `STOCK_CONSUMING_STATUSES` in `sheetsService.ts`:
-**consuming = every status EXCEPT «отменён» (cancel).** New recipes are written in
-status «план». Legacy statuses («в работе», «активен», «удалён», «архив») all
-consume. Only cancel returns the raw material (Need rows deleted on cancel,
-re-written on any other transition).
+**consuming = ТОЛЬКО «ожидающие» статусы «план» / «в работе» (легаси «активен»).**
+ВЫРАБОТАННЫЕ рецепты («архив», легаси «удалён») и «отменён» НЕ списывают.
+New recipes are written in status «план». Need rows: пишутся только для
+списывающих статусов; для архива/отмены удаляются. `getNeedTotals` дополнительно
+фильтрует по статусу на ЧТЕНИИ (join с Recipes), чтобы старые строки Need уже
+выработанных рецептов не давали фантомную потребность без миграции.
 
-**Why:** the business wants planned recipes to reserve raw material immediately and
-to keep a paper trail (план → архив) instead of destroying recipes. Cancel is the
-only "release the stock" action.
+**Why:** рабочий процесс «План→Факт»: план резервирует сырьё, а ПОСЛЕ выработки
+склад загружает НОВЫЙ (уже уменьшенный) остаток — расход уже учтён в остатке,
+поэтому списывать выработанный рецепт второй раз = ДВОЙНОЙ счёт (занижение
+остатков). Отмена возвращает сырьё. Раньше архив ошибочно тоже списывал.
 
 **How to apply:**
+- Любой новый путь учёта расхода/потребности рецептов сверять по
+  `STOCK_CONSUMING_STATUSES` (и «живое» потребление, и лист Need); архив = факт
+  выработки, не резерв.
 - Status transitions go through `POST /recipes/:uid/status {status: plan|archive|cancel}`
   (bulk: `{uids, status}`). There is NO `/cancel` or `/archive` route anymore.
 - Shortage NEVER blocks. The old 409 admission gate (upload) and 409 shortage gate

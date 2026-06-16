@@ -1160,13 +1160,23 @@ export async function writeNeedFromRecipe(recipe_uid: string, lines: { raw_uid: 
 }
 
 export async function getNeedTotals(): Promise<Map<string, number>> {
-  const rows = await readRange("Need", "A2:H5000");
+  const [rows, recipeRows] = await Promise.all([
+    readRange("Need", "A2:H5000"),
+    readRange("Recipes", "A2:M5000"),
+  ]);
+  // Потребность учитываем только по «списывающим» рецептам (план / в работе).
+  // Выработанные (архив) и отменённые рецепты потребности не создают: их сырьё
+  // либо уже учтено в новом остатке склада, либо возвращено. Фильтр по статусу
+  // на ЧТЕНИИ автоматически чистит и старые строки Need уже выработанных рецептов.
+  const statusByRecipe = new Map<string, string>();
+  for (const r of recipeRows) if (r[0]) statusByRecipe.set(String(r[0]), String(r[11] || ""));
   const map = new Map<string, number>();
   for (const r of rows) {
-    if (r[2]) {
-      const cur = map.get(String(r[2])) || 0;
-      map.set(String(r[2]), cur + parseNum(r[6]));
-    }
+    if (!r[2]) continue;
+    const recUid = String(r[1] || "");
+    if (!STOCK_CONSUMING_STATUSES.has(statusByRecipe.get(recUid) || "")) continue;
+    const cur = map.get(String(r[2])) || 0;
+    map.set(String(r[2]), cur + parseNum(r[6]));
   }
   return map;
 }
@@ -1191,12 +1201,13 @@ export async function deleteNeedByRecipe(recipe_uid: string): Promise<number> {
 
 /**
  * Статусы рецепта (лист Recipes, колонка L / индекс 11):
- *   IN_WORK   — рецепт пущен в работу, сырьё списано с остатков.
- *   CANCELLED — рецепт отменён, сырьё возвращается в общие остатки.
- *   DELETED   — рецепт отработан и удалён в архив; сырьё НЕ возвращается
- *               (остаётся списанным).
- * В «живые остатки» вычитается потребление рецептов в статусах IN_WORK и DELETED;
- * CANCELLED не вычитается (возврат сырья).
+ *   PLAN      — план: сырьё зарезервировано (списывается с живых остатков).
+ *   IN_WORK   — пущен в работу: сырьё списано с остатков.
+ *   ARCHIVED  — выработан и убран в архив: НЕ списывается (после выработки
+ *               загружается новый остаток склада, расход уже в нём учтён).
+ *   CANCELLED — отменён: сырьё возвращается в общие остатки (не списывается).
+ *   DELETED   — легаси-архив, как ARCHIVED: не списывается.
+ * Какие статусы списывают — см. STOCK_CONSUMING_STATUSES.
  */
 export const RECIPE_STATUS = {
   PLAN: "план",
@@ -1208,14 +1219,15 @@ export const RECIPE_STATUS = {
 
 /**
  * Статусы, при которых сырьё рецепта считается списанным со склада (вычитается
- * из живых остатков). По новой логике «План→Факт» сырьё резервируется уже на
- * этапе плана и не возвращается при выработке (архиве) — со склада возвращает
- * только ОТМЕНА. Поэтому списанными считаются ВСЕ статусы, кроме «отменён».
- * Легаси: «активен» = старый «в работе», «удалён» = старый архив.
+ * из живых остатков). Списывают только «ожидающие» статусы — план и «в работе»:
+ * сырьё зарезервировано под будущую выработку, нового остатка склада ещё нет.
+ * ВЫРАБОТАННЫЕ рецепты (архив / легаси-«удалён») НЕ списываются: после выработки
+ * склад загружает НОВЫЙ (уже уменьшенный) остаток, расход в нём уже учтён —
+ * повторное вычитание давало бы двойной счёт. Отмена тоже не списывает (сырьё
+ * возвращается в остатки). Легаси: «активен» = старый «в работе».
  */
 export const STOCK_CONSUMING_STATUSES = new Set<string>([
-  RECIPE_STATUS.PLAN, RECIPE_STATUS.IN_WORK, RECIPE_STATUS.ARCHIVED,
-  RECIPE_STATUS.DELETED, "активен",
+  RECIPE_STATUS.PLAN, RECIPE_STATUS.IN_WORK, "активен",
 ]);
 
 /**

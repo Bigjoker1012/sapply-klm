@@ -3,14 +3,16 @@
  *   GET  /api/recipes                — список рецептов со статусами
  *   GET  /api/recipes/:uid/lines     — состав конкретного рецепта
  *   POST /api/recipes/:uid/status    — сменить статус { status: plan|archive|cancel }.
- *                                      Рецепт НЕ удаляется физически. «отмена»
- *                                      возвращает сырьё; «план»/«архив» списывают.
+ *                                      Рецепт НЕ удаляется физически. Списывают
+ *                                      только «план»/«в работе»; «архив» (выработан)
+ *                                      и «отмена» — НЕ списывают.
  *   POST /api/recipes/:uid/tons      — изменить выработку (нехватка НЕ блокирует)
  *   POST /api/recipes/bulk           — групповая смена статуса { uids, status }
  *
  * Источник данных: Google Sheets (листы Recipes / RecipeLines), куда пишет
  * разбор рецепта (routes/upload.ts). «Живые остатки» вычитают потребление
- * всех рецептов, кроме «отменён».
+ * рецептов в списывающих статусах (план / в работе) — см.
+ * STOCK_CONSUMING_STATUSES; выработанные (архив) и отменённые не вычитаются.
  *
  * Доступ только для авторизованных: requireAuth навешан на весь роутер.
  */
@@ -18,7 +20,7 @@ import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import {
   getRecipesList, getRecipeLines, setRecipeStatus, deleteNeedByRecipe,
-  updateRecipeTons, writeNeedFromRecipe, RECIPE_STATUS,
+  updateRecipeTons, writeNeedFromRecipe, RECIPE_STATUS, STOCK_CONSUMING_STATUSES,
 } from "../services/sheetsService";
 import { withStockMutation } from "../services/stockMutex";
 
@@ -54,16 +56,17 @@ const ACTION_STATUS: Record<string, string> = {
 /**
  * Меняет статус рецепта и пересчитывает его потребность (Need). Рецепт НИКОГДА не
  * удаляется физически — только меняется статус. Под общим мьютексом склада: смена
- * статуса меняет эффективное списание (отмена возвращает сырьё, план/архив —
- * списывают), поэтому нельзя пересекаться с приёмом рецепта и изменением
- * выработки. Need: при отмене удаляем, иначе пересчитываем из текущих строк.
+ * статуса меняет эффективное списание (списывают только план / в работе; архив-
+ * выработан и отмена — нет), поэтому нельзя пересекаться с приёмом рецепта и
+ * изменением выработки. Need пишем только для списывающих статусов; для
+ * архива/отмены — удаляем (потребности больше нет).
  */
 async function transitionRecipe(uid: string, status: string): Promise<{ found: boolean }> {
   return withStockMutation(async () => {
     const found = await setRecipeStatus(uid, status);
     if (!found) return { found };
     await deleteNeedByRecipe(uid);
-    if (status !== RECIPE_STATUS.CANCELLED) {
+    if (STOCK_CONSUMING_STATUSES.has(status)) {
       const lines = await getRecipeLines(uid);
       const needLines = lines
         .filter(l => l.raw_uid && l.match_status === "matched" && l.consumption_kg > 0)
@@ -76,8 +79,9 @@ async function transitionRecipe(uid: string, status: string): Promise<{ found: b
 
 /**
  * Смена статуса одного рецепта: { status: 'plan' | 'archive' | 'cancel' }.
- *   plan    → «план»   (сырьё зарезервировано/списано);
- *   archive → «архив»  (выработан, сырьё остаётся списанным);
+ *   plan    → «план»    (сырьё зарезервировано/списано);
+ *   archive → «архив»   (выработан — НЕ списывается: после выработки грузится
+ *                        новый остаток склада, расход уже в нём учтён);
  *   cancel  → «отменён» (сырьё возвращается в остатки).
  */
 router.post("/:uid/status", async (req: Request, res: Response) => {
