@@ -206,7 +206,12 @@ export default function Planning({ onBack }: { onBack: () => void }) {
                       onChange={e => onManualAvgChange(r, e.target.value)}
                       onBlur={() => onManualAvgBlur(r)}
                       placeholder="—"
-                      className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-right text-gray-200"
+                      disabled={!r.manual_input}
+                      className={`w-24 border rounded px-2 py-1 text-right tabular-nums ${
+                        r.manual_input
+                          ? 'bg-gray-800 border-gray-700 text-gray-200 cursor-text'
+                          : 'bg-gray-900 border-gray-800 text-gray-500 cursor-not-allowed'
+                      }`}
                     />
                   </td>
                   <td className="px-3 py-2 text-center">
