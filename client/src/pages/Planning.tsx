@@ -198,20 +198,16 @@ export default function Planning({ onBack }: { onBack: () => void }) {
                     {fmt(r.qty_today)} <span className="text-xs text-gray-500">{r.unit}</span>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {r.manual_input ? (
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.1"
-                        value={r.manual_avg_usage ?? ''}
-                        onChange={e => onManualAvgChange(r, e.target.value)}
-                        onBlur={() => onManualAvgBlur(r)}
-                        placeholder="—"
-                        className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-right text-gray-200"
-                      />
-                    ) : (
-                      <span className="text-gray-600">—</span>
-                    )}
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.1"
+                      value={r.manual_avg_usage ?? ''}
+                      onChange={e => onManualAvgChange(r, e.target.value)}
+                      onBlur={() => onManualAvgBlur(r)}
+                      placeholder="—"
+                      className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-right text-gray-200"
+                    />
                   </td>
                   <td className="px-3 py-2 text-center">
                     <select

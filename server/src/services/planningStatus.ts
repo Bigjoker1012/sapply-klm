@@ -123,7 +123,9 @@ export async function computePlanningRows(): Promise<PlanningComputedRow[]> {
         inbound_qty,
         planned_need,
         qty_today,
-        avg_monthly_usage: avg,
+        // Всегда отдаём сохранённое значение для отображения,
+        // но в расчёте статуса используем только если manual_input включён.
+        avg_monthly_usage: manual_avg_usage,
         coefficient,
         manual_input,
         manual_avg_usage,
