@@ -77,10 +77,9 @@ export default function Planning({ onBack }: { onBack: () => void }) {
   };
 
   const onManualToggle = (r: PlanRow, checked: boolean) => {
-    updateLocal(r.raw_uid, {
-      manual_input: checked,
-      avg_monthly_usage: checked ? r.manual_avg_usage : null,
-    });
+    // Сохраняем введённое значение в поле, но не используем
+    // его в расчёте статуса (статус = «—» пока галочка снята).
+    updateLocal(r.raw_uid, { manual_input: checked });
     save(r.raw_uid, { manual_input: checked });
   };
 
