@@ -112,7 +112,9 @@ export async function computePlanningRows(): Promise<PlanningComputedRow[]> {
       const planned_need = round2(need.get(m.raw_uid) || 0);
       // Остаток на руках за вычетом потребности по рецептам, не ниже 0.
       const qty_today = Math.max(0, round2(plant_qty + lip_qty + inbound_qty - planned_need));
-      const avg = manual_input ? manual_avg_usage : null;
+      // Статус считаем всегда, если расход задан (не зависимо от галочки «Ручной ввод»).
+      // Галочка регулирует только редактирование поля.
+      const avg = manual_avg_usage;
       const { status, need_ratio, final } = planningStatusOf(qty_today, avg, coefficient);
       return {
         raw_uid: m.raw_uid,
