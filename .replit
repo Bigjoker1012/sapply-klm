@@ -45,7 +45,7 @@ waitForPort = 5000
 
 [deployment]
 deploymentTarget = "vm"
-run = ["npm", "start"]
+run = ["npx", "concurrently", "npx ts-node --transpile-only -P server/tsconfig.json server/src/index.ts", "cd client && npx vite"]
 build = ["npm", "run", "build"]
 
 [postMerge]
