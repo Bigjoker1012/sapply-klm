@@ -99,10 +99,14 @@ async function rawSheetGet(path: string) {
     const { data } = await axios.get(`${SHEETS_BASE}${path}`, { headers: { Authorization: auth } });
     return data;
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { ReplitConnectors } = require("@replit/connectors-sdk");
-  const r = await new ReplitConnectors().proxy("google-sheet", path, { method: "GET" });
-  return r.json();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { ReplitConnectors } = require("@replit/connectors-sdk");
+    const r = await new ReplitConnectors().proxy("google-sheet", path, { method: "GET" });
+    return r.json();
+  } catch {
+    throw new Error("Google Sheets unavailable: set GOOGLE_SERVICE_ACCOUNT_JSON env var or run on Replit");
+  }
 }
 
 async function sheetGet(path: string) {
@@ -128,22 +132,33 @@ async function sheetGet(path: string) {
 }
 
 /**
- * Запись через прокси (ReplitConnectors) НЕ бросает на 429/4xx/5xx — отдаёт тело
- * {error:{...}}. Если вернуть его как «успех», writeRange/appendRows молча
- * «успешно» НЕ запишут (фантомный успех под рейт-лимитом). Поэтому, как и
- * sheetGet/readRange: ретраим временный лимит и БРОСАЕМ на остальных ошибках.
+ * Запись в Google Sheets. При наличии GOOGLE_SERVICE_ACCOUNT_JSON — напрямую
+ * через API, иначе через ReplitConnectors (только на Replit).
+ * Ретраим временный лимит и БРОСАЕМ на остальных ошибках.
  */
 async function proxyWrite(method: "POST" | "PUT", path: string, body: object) {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { ReplitConnectors } = require("@replit/connectors-sdk");
   for (let attempt = 0; ; attempt++) {
     await acquireSlot();
-    const r = await new ReplitConnectors().proxy("google-sheet", path, {
-      method,
-      body: JSON.stringify(body),
-      headers: { "Content-Type": "application/json" },
-    });
-    const data = await r.json();
+    let data: any;
+    if (GOOGLE_SA_JSON) {
+      const auth = await getAuthHeader();
+      const resp = await axios({
+        method,
+        url: `${SHEETS_BASE}${path}`,
+        data: body,
+        headers: { Authorization: auth, "Content-Type": "application/json" },
+      });
+      data = resp.data;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { ReplitConnectors } = require("@replit/connectors-sdk");
+      const r = await new ReplitConnectors().proxy("google-sheet", path, {
+        method,
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      });
+      data = await r.json();
+    }
     if (data && data.error) {
       if (isRateLimited(data.error) && attempt < MAX_RETRIES) {
         await sleep(250 * (attempt + 1) ** 2);
