@@ -253,6 +253,7 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
   const [documents, setDocuments]         = useState<DocumentsMap | null>(null);
   const [openArchive, setOpenArchive]     = useState<DocType | null>(null);
 
+  const [showMonitor, setShowMonitor]       = useState(false);
   const [inboundForm, setInboundForm] = useState({ raw_uid: '', raw_name: '', qty: '', eta: '', destination: '', document: '' });
   const [lipForm, setLipForm]         = useState({ raw_uid: '', name: '', qty_on_hand: '', reserved_qty: '' });
 
@@ -1133,6 +1134,24 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
                   >✕</button>
                 </div>
               ))}
+            </div>
+          )}
+        </section>
+
+        {/* ─── МОНИТОР ЗАКУПОК ─── */}
+        <section className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+          <button
+            onClick={() => setShowMonitor(!showMonitor)}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <h2 className="text-xs font-semibold text-blue-400 uppercase tracking-wider">
+              ▶ Монитор закупок ({decisions.length} позиций)
+            </h2>
+            <span className="text-xs text-gray-500">щёлкните для развёртывания</span>
+          </button>
+          {showMonitor && (
+            <div className="mt-3">
+              <MonitorTable rows={decisions} loading={loading} loadError={loadError} />
             </div>
           )}
         </section>

@@ -134,16 +134,20 @@ async function loadRawMaterials(): Promise<RawMaterialDto[]> {
  * статусом «получено»/«удалено», поэтому удалённые позиции исчезают из списка.
  */
 async function loadInbound(): Promise<InboundDto[]> {
-  const list = await getInboundList();
-  return list.map(r => ({
-    id: String(r.id),
-    raw_uid: r.raw_uid,
-    raw_name: r.raw_name,
-    qty: Math.round((r.qty + Number.EPSILON) * 100) / 100,
-    eta: r.eta ?? "",
-    destination: r.destination ?? "",
-    status: r.status,
-  }));
+  try {
+    const list = await getInboundList();
+    return list.map(r => ({
+      id: String(r.id),
+      raw_uid: r.raw_uid,
+      raw_name: r.raw_name,
+      qty: Math.round((r.qty + Number.EPSILON) * 100) / 100,
+      eta: r.eta ?? "",
+      destination: r.destination ?? "",
+      status: r.status,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -192,7 +196,12 @@ async function loadStatus() {
 
   // Счётчик «в пути» берём из того же источника, что и список (Sheets Inbound),
   // иначе нижняя панель показывала бы 0 при непустом списке выше.
-  const inboundList = await getInboundList();
+  let inboundList: any[] = [];
+  try {
+    inboundList = await getInboundList();
+  } catch {
+    inboundList = [];
+  }
 
   const unresolvedRow = (await db.execute(sql`
     SELECT COUNT(*) AS c FROM upload_row ur
@@ -270,8 +279,13 @@ async function computeDecisions(): Promise<Decision[]> {
 
 router.get("/all", async (_req: Request, res: Response) => {
   try {
-    const [decisions, rawMaterials, inbound, unmatched, status] = await Promise.all([
-      computeDecisions(),
+    let decisions: Decision[] = [];
+    try {
+      decisions = await computeDecisions();
+    } catch (err: any) {
+      console.warn("[dashboard/all] decisions fallback:", err.message);
+    }
+    const [rawMaterials, inbound, unmatched, status] = await Promise.all([
       loadRawMaterials(),
       loadInbound(),
       loadUnmatched(),
@@ -288,7 +302,7 @@ router.get("/decisions", async (_req: Request, res: Response) => {
   try {
     res.json(await computeDecisions());
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.json([]);
   }
 });
 

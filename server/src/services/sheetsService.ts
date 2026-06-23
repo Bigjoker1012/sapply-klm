@@ -1,24 +1,65 @@
 import axios from "axios";
-import { JWT } from "google-auth-library";
+import crypto from "crypto";
+import https from "https";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || "1XLQ1FSJOXLwIgEhbAtz95yrVXbEzBYQkAgQ5XEnLxOA";
 const GOOGLE_SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 const SHEETS_BASE = "https://sheets.googleapis.com";
 
-let _jwtClient: JWT | null = null;
+let _cachedToken: { token: string; expiry: number } | null = null;
+
+function signJwt(header: object, payload: object, privateKey: string): string {
+  const h = Buffer.from(JSON.stringify(header)).toString("base64url");
+  const p = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const data = h + "." + p;
+  const sig = crypto.sign("sha256", Buffer.from(data), privateKey).toString("base64url");
+  return data + "." + sig;
+}
+
+function requestToken(creds: any): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const jwt = signJwt(
+    { alg: "RS256", typ: "JWT" },
+    {
+      iss: creds.client_email,
+      scope: "https://www.googleapis.com/auth/spreadsheets",
+      aud: "https://oauth2.googleapis.com/token",
+      exp: now + 3600,
+      iat: now,
+    },
+    creds.private_key
+  );
+
+  const body = "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=" + jwt;
+
+  return new Promise((resolve, reject) => {
+    const req = https.request("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Content-Length": Buffer.byteLength(body) },
+    }, (res) => {
+      let data = "";
+      res.on("data", chunk => data += chunk);
+      res.on("end", () => {
+        const parsed = JSON.parse(data);
+        if (parsed.access_token) resolve(parsed.access_token);
+        else reject(new Error("Token error: " + (parsed.error_description || JSON.stringify(parsed))));
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 async function getAuthHeader(): Promise<string> {
   if (!GOOGLE_SA_JSON) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not configured");
-  if (!_jwtClient) {
-    const creds = JSON.parse(GOOGLE_SA_JSON);
-    _jwtClient = new JWT({
-      email: creds.client_email,
-      key: creds.private_key,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
+  if (_cachedToken && Date.now() < _cachedToken.expiry) {
+    return "Bearer " + _cachedToken.token;
   }
-  const { token } = await _jwtClient.getAccessToken();
-  return `Bearer ${token}`;
+  const creds = JSON.parse(GOOGLE_SA_JSON);
+  const token = await requestToken(creds);
+  _cachedToken = { token, expiry: Date.now() + 3400_000 };
+  return "Bearer " + token;
 }
 
 /** Parse numbers that may use comma as decimal separator (European locale from Google Sheets) */
@@ -94,19 +135,9 @@ function isRateLimited(x: any): boolean {
 }
 
 async function rawSheetGet(path: string) {
-  if (GOOGLE_SA_JSON) {
-    const auth = await getAuthHeader();
-    const { data } = await axios.get(`${SHEETS_BASE}${path}`, { headers: { Authorization: auth } });
-    return data;
-  }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { ReplitConnectors } = require("@replit/connectors-sdk");
-    const r = await new ReplitConnectors().proxy("google-sheet", path, { method: "GET" });
-    return r.json();
-  } catch {
-    throw new Error("Google Sheets unavailable: set GOOGLE_SERVICE_ACCOUNT_JSON env var or run on Replit");
-  }
+  const auth = await getAuthHeader();
+  const { data } = await axios.get(`${SHEETS_BASE}${path}`, { headers: { Authorization: auth } });
+  return data;
 }
 
 async function sheetGet(path: string) {
@@ -132,67 +163,45 @@ async function sheetGet(path: string) {
 }
 
 /**
- * Запись в Google Sheets. При наличии GOOGLE_SERVICE_ACCOUNT_JSON — напрямую
- * через API, иначе через ReplitConnectors (только на Replit).
- * Ретраим временный лимит и БРОСАЕМ на остальных ошибках.
+ * Запись через Google Sheets API (axios + JWT). Ретраим временный лимит и
+ * БРОСАЕМ на остальных ошибках.
  */
-async function proxyWrite(method: "POST" | "PUT", path: string, body: object) {
+async function sheetsWrite(method: "POST" | "PUT", path: string, body: object) {
   for (let attempt = 0; ; attempt++) {
     await acquireSlot();
-    let data: any;
-    if (GOOGLE_SA_JSON) {
+    try {
       const auth = await getAuthHeader();
-      const resp = await axios({
+      const { data } = await axios({
         method,
         url: `${SHEETS_BASE}${path}`,
-        data: body,
         headers: { Authorization: auth, "Content-Type": "application/json" },
+        data: body,
       });
-      data = resp.data;
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { ReplitConnectors } = require("@replit/connectors-sdk");
-      const r = await new ReplitConnectors().proxy("google-sheet", path, {
-        method,
-        body: JSON.stringify(body),
-        headers: { "Content-Type": "application/json" },
-      });
-      data = await r.json();
-    }
-    if (data && data.error) {
-      if (isRateLimited(data.error) && attempt < MAX_RETRIES) {
+      if (data && data.error) {
+        if (isRateLimited(data.error) && attempt < MAX_RETRIES) {
+          await sleep(250 * (attempt + 1) ** 2);
+          continue;
+        }
+        const e = data.error;
+        throw new Error(`Sheets ${method} ${path} → ${e.code ?? ""} ${e.status ?? ""} ${e.message ?? JSON.stringify(e)}`.trim());
+      }
+      return data;
+    } catch (err) {
+      if (isRateLimited(err) && attempt < MAX_RETRIES) {
         await sleep(250 * (attempt + 1) ** 2);
         continue;
       }
-      const e = data.error;
-      throw new Error(`Sheets ${method} ${path} → ${e.code ?? ""} ${e.status ?? ""} ${e.message ?? JSON.stringify(e)}`.trim());
+      throw err;
     }
-    return data;
   }
 }
 
 async function sheetPost(path: string, body: object) {
-  if (GOOGLE_SA_JSON) {
-    await acquireSlot();
-    const auth = await getAuthHeader();
-    const { data } = await axios.post(`${SHEETS_BASE}${path}`, body, {
-      headers: { Authorization: auth, "Content-Type": "application/json" },
-    });
-    return data;
-  }
-  return proxyWrite("POST", path, body);
+  return sheetsWrite("POST", path, body);
 }
 
 async function sheetPut(path: string, body: object) {
-  if (GOOGLE_SA_JSON) {
-    await acquireSlot();
-    const auth = await getAuthHeader();
-    const { data } = await axios.put(`${SHEETS_BASE}${path}`, body, {
-      headers: { Authorization: auth, "Content-Type": "application/json" },
-    });
-    return data;
-  }
-  return proxyWrite("PUT", path, body);
+  return sheetsWrite("PUT", path, body);
 }
 
 export async function readRange(sheet: string, range: string): Promise<any[][]> {
@@ -201,12 +210,12 @@ export async function readRange(sheet: string, range: string): Promise<any[][]> 
   const cached = cacheGet<any[][]>(cacheKey);
   if (cached) return cached;
   const d = await sheetGet(`/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}`);
-  // Не глушить ошибки чтения. Прокси-путь (ReplitConnectors) возвращает тело
-  // ответа как есть: при 429/401/5xx это {error:{...}} БЕЗ поля values. Если
-  // молча отдать [], вызывающий код (matchBatch и др.) примет это за «пустой
-  // лист» и выдаст уверенно-неверный результат («0 строк распознано»), а пустой
-  // ответ ещё и закэшируется на CACHE_TTL — один сбой отравляет все чтения
-  // диапазона на 30 c. Поэтому при ошибке бросаем и НЕ кэшируем.
+  // Не глушить ошибки чтения. При 429/401/5xx API возвращает тело
+  // {error:{...}} БЕЗ поля values. Если молча отдать [], вызывающий код
+  // (matchBatch и др.) примет это за «пустой лист» и выдаст уверенно-неверный
+  // результат («0 строк распознано»), а пустой ответ ещё и закэшируется на
+  // CACHE_TTL — один сбой отравляет все чтения диапазона на 30 с.
+  // Поэтому при ошибке бросаем и НЕ кэшируем.
   if (d && d.error) {
     const e = d.error;
     throw new Error(
