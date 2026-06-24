@@ -1,4 +1,5 @@
 import axios from "axios";
+import { recipeFullName } from "./excelParser";
 import crypto from "crypto";
 import https from "https";
 
@@ -1333,7 +1334,7 @@ export async function getRecipesList(): Promise<any[]> {
   return rows
     .filter(r => r[0] && String(r[0]).startsWith("REC"))
     .map(r => ({
-      recipe_uid: r[0], code: r[1], full_name: r[2], premix_name: r[3],
+      recipe_uid: r[0], code: r[1], full_name: recipeFullName(String(r[1] || "")), premix_name: r[3],
       date: r[4], batch_t: parseNum(r[6]), customer: r[7],
       status: String(r[11] || ""), file_name: r[10] || "",
       base_batch_kg: parseNum(r[12]) || 1000,

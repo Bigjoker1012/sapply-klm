@@ -336,8 +336,10 @@ export function isApprovalText(s: string): boolean {
  */
 export function recipeFullName(code: string): string {
   if (!code) return "";
+  // Убираем префикс Д- (номер документа) перед определением типа
+  const clean = code.replace(/^Д-/i, "");
   // Определяем тип по первым буквам кода
-  const prefix = code.replace(/[-\/].*$/, "").toUpperCase();
+  const prefix = clean.replace(/[-\/].*$/, "").toUpperCase();
   let type = "";
   if (/^ПКР/.test(prefix)) type = "Премикс-концентрат";
   else if (/^ПК/.test(prefix)) type = "Премикс-концентрат";
@@ -345,7 +347,7 @@ export function recipeFullName(code: string): string {
   else if (/^КД/.test(prefix)) type = "Кормовые добавки";
   else if (/^П/.test(prefix)) type = "Премикс";
   else if (/^К/.test(prefix)) type = "Концентрат";
-  return type ? `${type} ${code}` : code;
+  return type ? `${type} ${clean}` : clean;
 }
 
 /**
