@@ -9,7 +9,7 @@ import {
 } from "../services/sheetsService";
 import { withStockMutation } from "../services/stockMutex";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
-import { parsePolotskExcel, parseRecipeExcel, parseKdExcel, recipeCodeFromFilename, isOrgName } from "../services/excelParser";
+import { parsePolotskExcel, parseRecipeExcel, parseKdExcel, recipeCodeFromFilename, isOrgName, isApprovalText } from "../services/excelParser";
 import { saveDocument } from "../services/documentArchive";
 
 const router = Router();
@@ -233,8 +233,9 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       // проекте именуется по коду («Д-П60-3_Б20_ПЛЦ-155.xlsx»).
       const recipeCode = parsed.code || recipeCodeFromFilename(up.originalname);
       // Имя рецепта: описание из документа, иначе сам код. Никогда не сохраняем
-      // наименование завода-заказчика («ОАО …комбинат») как имя рецепта.
-      const recipeName = parsed.name && parsed.name !== "Рецепт" && !isOrgName(parsed.name)
+      // наименование завода-заказчика («ОАО …комбинат») или текст согласования
+      // («Согласовано: Утверждаю:») как имя рецепта.
+      const recipeName = parsed.name && parsed.name !== "Рецепт" && !isOrgName(parsed.name) && !isApprovalText(parsed.name)
         ? parsed.name
         : (recipeCode || "Рецепт");
       const recipeUid = await writeRecipe({

@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { isApprovalText } from "./excelParser";
 
 // Ленивая инициализация: без ключа конструктор OpenAI бросает исключение,
 // что сломало бы фолбэк «нет ключа → OCR». Создаём клиент только при первом
@@ -128,7 +129,7 @@ export async function parseRecipeWithVision(imagesB64: string[]): Promise<AiReci
 {"code":"...","name":"...","date":"ДД.ММ.ГГГГ","batchKg":число,"rows":[{"rawName":"...","percentage":число,"quantityPerTon":число,"pricePerKg":число}]}
 
 Правила:
-- code — код рецепта (например «Д-П60-3/Б20/ПЛЦ-164»).
+- code — код рецепта (например «Д-П60-3/Б20/ПЛЦ-164», «П60-3», «ПКР-2», «КК-61-1/Б20/ПЛЦ-178»).
 - name — текст после слова «Для» (например «ВЫСОКОПРОДУКТИВНЫХ КОРОВ, СТОЙЛОВЫЙ ПЕРИОД»).
 - date — значение «Дата печати».
 - batchKg — «Выработка» в тоннах × 1000 (1 т → 1000).
@@ -180,7 +181,7 @@ export async function parseRecipeWithVision(imagesB64: string[]): Promise<AiReci
 
   return {
     code: String(parsed.code || "").trim(),
-    name: String(parsed.name || "").trim() || String(parsed.code || "Рецепт"),
+    name: isApprovalText(String(parsed.name || "")) ? String(parsed.code || "Рецепт") : (String(parsed.name || "").trim() || String(parsed.code || "Рецепт")),
     date: String(parsed.date || "").trim() || new Date().toISOString().split("T")[0],
     batchKg: Number(parsed.batchKg) || 1000,
     rows,

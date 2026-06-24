@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Recipe, fmt, STATUS_STYLE } from './types';
 
@@ -45,6 +45,9 @@ export default function RecipesTab({
 }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<Filter>('active');
+  const [editingUid, setEditingUid] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const editRef = useRef<HTMLInputElement>(null);
 
   const counts = recipes.reduce(
     (acc, r) => { acc[categoryOf(r.status)]++; acc.all++; return acc; },
@@ -94,18 +97,27 @@ export default function RecipesTab({
     }
   };
 
-  const editTons = async (r: Recipe) => {
-    const input = prompt(
-      `Новая выработка (т) для «${r.code || r.full_name || r.recipe_uid}». Текущая: ${r.batch_t}.\n` +
-      `Расход и потребность пересчитаются. Нехватка склада не блокирует — остаток может уйти в минус.`,
-      String(r.batch_t || ''),
-    );
-    if (input == null) return;
-    const tons = parseFloat(input.replace(',', '.'));
-    if (!Number.isFinite(tons) || tons <= 0) { flash('❌ Некорректное число тонн'); return; }
+  const startEdit = (r: Recipe) => {
+    setEditingUid(r.recipe_uid);
+    setEditValue(String(r.batch_t || ''));
+    setTimeout(() => editRef.current?.focus(), 50);
+  };
+
+  const cancelEdit = () => {
+    setEditingUid(null);
+    setEditValue('');
+  };
+
+  const saveEdit = async (uid: string) => {
+    const tons = parseFloat(editValue.replace(',', '.'));
+    if (!Number.isFinite(tons) || tons <= 0) {
+      flash('❌ Некорректное число тонн');
+      return;
+    }
+    setEditingUid(null);
     setBusy(true);
     try {
-      await axios.post(`${API}/recipes/${r.recipe_uid}/tons`, { tons });
+      await axios.post(`${API}/recipes/${uid}/tons`, { tons });
       flash('✅ Выработка обновлена, остатки и потребность пересчитаны');
       await reload();
     } catch (e: any) {
@@ -192,15 +204,37 @@ export default function RecipesTab({
                   )}
                 </td>
                 <td className="px-3 py-1.5 text-gray-400">{r.date || '—'}</td>
-                <td className="px-3 py-1.5 text-right text-gray-300">{r.batch_t ? fmt(r.batch_t) : '—'}</td>
+                <td className="px-3 py-1.5 text-right">
+                  {editingUid === r.recipe_uid ? (
+                    <input
+                      ref={editRef}
+                      type="text"
+                      value={editValue}
+                      onChange={e => setEditValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') saveEdit(r.recipe_uid);
+                        if (e.key === 'Escape') cancelEdit();
+                      }}
+                      onBlur={() => saveEdit(r.recipe_uid)}
+                      className="w-20 text-right bg-gray-800 border border-blue-500 rounded px-1.5 py-0.5 text-white text-sm"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => startEdit(r)}
+                      disabled={busy}
+                      className="text-gray-300 hover:text-white hover:underline disabled:opacity-40 cursor-pointer"
+                      title="Нажмите для изменения тоннажа"
+                    >
+                      {r.batch_t ? fmt(r.batch_t) : '—'}
+                    </button>
+                  )}
+                </td>
                 <td className="px-3 py-1.5">
                   <span className={`text-xs border px-2 py-0.5 rounded ${STATUS_STYLE[r.status] || 'bg-gray-700/30 text-gray-300 border-gray-600'}`}>
                     {r.status || '—'}
                   </span>
                 </td>
                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                  <button onClick={() => editTons(r)} disabled={busy}
-                    className="text-xs text-blue-300 hover:underline mr-3 disabled:opacity-40">Выработка</button>
                   <select
                     value=""
                     disabled={busy}
