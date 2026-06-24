@@ -6,6 +6,7 @@ import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import pdfParse from 'pdf-parse';
 import { parseRecipeWithVision } from './aiMatcher';
+import { recipeFullName } from './excelParser';
 
 const execFileAsync = promisify(execFile);
 
@@ -122,7 +123,7 @@ function parseRecipeFromText(text: string): ParsedRecipe | null {
   if (rows.length === 0) return null;
 
   return {
-    name: name || code || "Рецепт",
+    name: name || recipeFullName(code) || "Рецепт",
     code,
     date: date || new Date().toISOString().split("T")[0],
     batchKg: batchKg || 1000,

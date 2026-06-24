@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { isApprovalText } from "./excelParser";
+import { isApprovalText, recipeFullName } from "./excelParser";
 
 // Ленивая инициализация: без ключа конструктор OpenAI бросает исключение,
 // что сломало бы фолбэк «нет ключа → OCR». Создаём клиент только при первом
@@ -181,7 +181,9 @@ export async function parseRecipeWithVision(imagesB64: string[]): Promise<AiReci
 
   return {
     code: String(parsed.code || "").trim(),
-    name: isApprovalText(String(parsed.name || "")) ? String(parsed.code || "Рецепт") : (String(parsed.name || "").trim() || String(parsed.code || "Рецепт")),
+    name: isApprovalText(String(parsed.name || ""))
+      ? recipeFullName(String(parsed.code || "Рецепт"))
+      : (String(parsed.name || "").trim() || recipeFullName(String(parsed.code || "Рецепт"))),
     date: String(parsed.date || "").trim() || new Date().toISOString().split("T")[0],
     batchKg: Number(parsed.batchKg) || 1000,
     rows,
