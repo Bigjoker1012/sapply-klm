@@ -496,6 +496,46 @@ export const DENY_TOKENS = new Set<string>([
   "шт", "штук", "штука", "штуки", "ед", "нетто", "брутто", "около",
 ]);
 
+/**
+ * Нормализация клавиатурной раскладки: русские буквы → латинские.
+ * Решает проблему "Витамин D3" введённый с русской раскладкой = "Витамин В3".
+ * Карта соответствий: русская клавиша → латинский символ.
+ */
+const RU_TO_LAT: Record<string, string> = {
+  "й":"q","ц":"w","у":"e","к":"r","е":"t","н":"y","г":"u","ш":"i","щ":"o","з":"p",
+  "х":"[", "ъ":"]",
+  "ф":"a","ы":"s","в":"d","а":"f","п":"g","р":"h","о":"j","л":"k","д":"l","ж":";","э":'\'',
+  "я":"z","ч":"x","с":"c","м":"v","и":"b","т":"n","ь":"m","б":",","ю":".",
+  "ё":"`",
+};
+
+/**
+ * Нормализует имя сырья: нижний регистр + раскладка клавиатуры.
+ * "Витамин В3" (рус. В) → "витамин d3", "витамин d3" (лат. D) → "витамин d3".
+ * Обе формы приводятся к единому виду для корректного сопоставления.
+ */
+export function normalizeRawName(s: string): string {
+  const lower = String(s).toLowerCase().trim();
+  return lower.split("").map(ch => RU_TO_LAT[ch] ?? ch).join("");
+}
+
+/**
+ * Извлекает «значащий» суффикс-букву/код из имени сырья.
+ * "Витамин А" → "а", "Витамин D3" → "d3", "Сульфат марганца" → null.
+ * Нужен для точного различия "Витамин А" vs "Витамин Е", "D3" vs "В3".
+ */
+function extractSuffix(s: string): string | null {
+  const n = normalizeRawName(s);
+  // Паттерн: "витамин" / "vitamin" + пробел + буква(ы) или код
+  const m = n.match(/(?:витамин|vitamin)\s+([a-z0-9]+)/i);
+  if (m) return m[1];
+  // Паттерн: последний токен — одна буква или буква+цифры (например "А", "D3", "В12")
+  const tokens = n.split(/\s+/);
+  const last = tokens[tokens.length - 1];
+  if (/^[a-z][0-9]*$/.test(last) && last.length <= 4) return last;
+  return null;
+}
+
 // Токен — это число с возможной единицей/процентом («25», «25кг», «32%», «0,5л»).
 const NUM_UNIT_RE = /^\d+([.,]\d+)?(кг|г|гр|мг|л|мл|т|тн|шт|%)?$/;
 
@@ -599,6 +639,7 @@ export async function filterKdSimilar(names: string[]): Promise<Set<string>> {
 
 export async function findRawByAlias(alias: string): Promise<string | null> {
   const normalized = alias.toLowerCase().trim();
+  const normLayout = normalizeRawName(alias);
   const materials = await getAllRawMaterials();
 
   // Direct match
@@ -607,6 +648,13 @@ export async function findRawByAlias(alias: string): Promise<string | null> {
          m.short_name.toLowerCase().trim() === normalized
   );
   if (direct) return direct.raw_uid;
+
+  // Normalized match (раскладка клавиатуры): "Витамин В3" → "витамин d3"
+  const normDirect = materials.find(
+    m => normalizeRawName(m.full_name) === normLayout ||
+         normalizeRawName(m.short_name) === normLayout
+  );
+  if (normDirect) return normDirect.raw_uid;
 
   // Aliases sheet lookup (формат-независимо, с резолвом кода)
   const aliasRows = await readRange("Aliases", "A2:D5000");
@@ -653,6 +701,9 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
   // Build lookup structures
   const byFullName  = new Map(materials.map(m => [m.full_name.toLowerCase().trim(), m.raw_uid]));
   const byShortName = new Map(materials.map(m => [m.short_name.toLowerCase().trim(), m.raw_uid]));
+  // Нормализованные имена (раскладка клавиатуры): "Витамин В3" → "витамин d3"
+  const byNormName = new Map(materials.map(m => [normalizeRawName(m.full_name), m.raw_uid]));
+  const byNormShort = new Map(materials.map(m => [normalizeRawName(m.short_name), m.raw_uid]));
 
   // Синонимы → канонический код каталога (формат-независимо, RAW001 ⇔ RAW_001).
   // Нерезолвящиеся коды (например, RAW070 — нет в каталоге) пропускаем.
@@ -677,6 +728,31 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
     if (byFullName.has(n))  { result.set(name, byFullName.get(n)!);  continue; }
     if (byShortName.has(n)) { result.set(name, byShortName.get(n)!); continue; }
     if (byAlias.has(n))     { result.set(name, byAlias.get(n)!);     continue; }
+
+    // Нормализованное имя (раскладка клавиатуры): "Витамин В3" → "витамин d3"
+    const nn = normalizeRawName(name);
+    if (byNormName.has(nn))  { result.set(name, byNormName.get(nn)!);  continue; }
+    if (byNormShort.has(nn)) { result.set(name, byNormShort.get(nn)!); continue; }
+
+    // Суффиксная проверка для витаминов/подобных: "Витамин А" vs "Витамин Е"
+    // Если суффикс не совпадает — не привязываем (null → ручная проверка).
+    const inputSuffix = extractSuffix(name);
+    if (inputSuffix) {
+      let suffixMatch: { uid: string } | null = null;
+      let suffixMismatch = false;
+      for (const m of materials) {
+        const candSuffix = extractSuffix(m.full_name) ?? extractSuffix(m.short_name);
+        if (candSuffix && normalizeRawName(m.full_name).replace(candSuffix, "").trim() === nn.replace(inputSuffix, "").trim()) {
+          if (candSuffix === inputSuffix) {
+            suffixMatch = { uid: m.raw_uid };
+          } else {
+            suffixMismatch = true;
+          }
+        }
+      }
+      if (suffixMatch) { result.set(name, suffixMatch.uid); continue; }
+      if (suffixMismatch) { result.set(name, null); continue; }
+    }
 
     // Fuzzy: только уверенное перекрытие значащих токенов. Тара/фасовка/единицы
     // («мешок 25 кг», «32%») отброшены, совпадения по общему слову не проходят.
