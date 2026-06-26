@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import {
-  matchBatch, addAliasesBatch, addToReviewQueueBatch,
+  matchBatch, addToReviewQueueBatch,
   writePlantStock, writeLipStockBatch, writeLipBatchesBulk,
   writeRecipe, writeRecipeLines, writeNeedFromRecipe,
   getUnresolvedQueue, resolveQueueItem, addAlias,
@@ -60,8 +60,7 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
       const rawUid = matchMap.get(row.rawName);
       if (rawUid) {
         stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source_file: up.originalname });
-        newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "polotsk_file" });
-        matched++;
+                matched++;
       } else {
         queueItems.push({ text: row.rawName, source_type: "polotsk", file_name: up.originalname });
         unmatched++;
@@ -71,8 +70,7 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
     // 2. Write stock + aliases + queue in parallel (each is 1-2 calls)
     await Promise.all([
       stockRows.length ? writePlantStock(stockRows) : Promise.resolve(),
-      newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
-      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+            queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
 
     await saveDocument("polotsk", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
@@ -104,8 +102,7 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
       const rawUid = matchMap.get(row.rawName);
       if (rawUid) {
         stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source: "excel_file" });
-        newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "lipkovskaya_file" });
-        matched++;
+                matched++;
       } else {
         queueItems.push({ text: row.rawName, source_type: "lipkovskaya", file_name: up.originalname });
         unmatched++;
@@ -115,8 +112,7 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
     // 2. Write all in parallel (3 API calls total vs N×4 before)
     await Promise.all([
       writeLipStockBatch(stockRows),
-      newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
-      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+            queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
 
     await saveDocument("lipkovskaya", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
@@ -212,8 +208,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
         // в очередь распознавания не добавляем.
         plant++;
       } else if (rawUid) {
-        newAliases.push({ raw_uid: rawUid, alias: row.rawName, source: "recipe" });
-        if (consumption_kg > 0) {
+                if (consumption_kg > 0) {
           needLines.push({ raw_uid: rawUid, net_qty: consumption_kg });
         }
         matched++;
@@ -254,8 +249,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
 
       await Promise.all([
         writeRecipeLines(recipeUid, lines),
-        newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
-        queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+                queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
       ]);
 
       if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines);
@@ -304,8 +298,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
         stockAggregate.set(rawUid, { name: row.baseName, qty: (cur?.qty ?? 0) + row.qty });
         // Register baseName as alias if it came with a batch suffix
         if (row.batchCode) {
-          newAliases.push({ raw_uid: rawUid, alias: row.baseName, source: "kd_file" });
-        }
+                  }
         matched++;
       } else {
         queueItems.push({ text: row.baseName, source_type: "lipkovskaya_kd", file_name: up.originalname });
@@ -329,8 +322,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
     await Promise.all([
       writeLipBatchesBulk(batchRows),
       writeLipStockBatch(lipStockRows),
-      newAliases.length ? addAliasesBatch(newAliases) : Promise.resolve(),
-      filteredQueue.length ? addToReviewQueueBatch(filteredQueue) : Promise.resolve(),
+            filteredQueue.length ? addToReviewQueueBatch(filteredQueue) : Promise.resolve(),
     ]);
 
     await saveDocument("kd", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });

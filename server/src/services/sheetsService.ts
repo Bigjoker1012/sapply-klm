@@ -540,7 +540,7 @@ function extractSuffix(s: string): string | null {
   const n = s.toLowerCase().trim();
   // Паттерн 1: "витамин" + пропуск всего до последнего суффикса
   // "витамин d(кальция пантетонат) в3" → "в3"
-  const m1 = n.match(/(?:витамин|вит|vitamin)\s+.*?([a-zа-яё0-9]+)$/i);
+  const m1 = n.match(/(?:витамин|вит|vitamin)\s+([a-zа-яё0-9]+)/i);
   if (m1) return m1[1];
   // Паттерн 2: последний токен — одна буква или буква+цифры (например "А", "D3", "В12")
   const tokens = n.split(/\s+/);
@@ -556,7 +556,7 @@ function extractSuffix(s: string): string | null {
  */
 function extractSuffixOriginal(s: string): string | null {
   const lower = String(s).toLowerCase().trim();
-  const m = lower.match(/(?:витамин|вит|vitamin)\s+.*?([a-zа-яё0-9]+)$/i);
+  const m = lower.match(/(?:витамин|вит|vitamin)\s+([a-zа-яё0-9]+)/i);
   if (m) return m[1];
   const tokens = lower.split(/\s+/);
   const last = tokens[tokens.length - 1];
@@ -765,16 +765,17 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
     // Суффиксная проверка для витаминов: "Витамин А" vs "Витамин Е"
     // Используем extractSuffixOriginal() для сравнения — "В3" (рус.) ≠ "D3" (лат.)
     const inputSuffix = extractSuffixOriginal(name);
+      const isVitamin = /(?:витамин|вит|vitamin)/i.test(name);
     if (inputSuffix) {
-      const inputFirstWord = name.toLowerCase().trim().split(/\s+/)[0].replace(/ин$/, "");
+      const inputIsVit = (name.toLowerCase().trim().split(/\s+/)[0] || "").startsWith("вит");
       let suffixMatch: { uid: string } | null = null;
       let suffixMismatch = false;
       for (const m of materials) {
         const candSuffix = extractSuffixOriginal(m.full_name) ?? extractSuffixOriginal(m.short_name);
         if (!candSuffix) continue;
-        const candFirstWord = m.full_name.toLowerCase().trim().split(/\s+/)[0].replace(/ин$/, "");
-        if (candFirstWord === inputFirstWord || inputFirstWord.startsWith(candFirstWord) || candFirstWord.startsWith(inputFirstWord)) {
-          if (candSuffix === inputSuffix) {
+        const candIsVit = (m.full_name.toLowerCase().trim().split(/\s+/)[0] || "").startsWith("вит");
+        if (inputIsVit && candIsVit) {
+          if (translitSuffix(candSuffix) === translitSuffix(inputSuffix) || candSuffix === inputSuffix) {
             suffixMatch = { uid: m.raw_uid };
           } else {
             suffixMismatch = true;
