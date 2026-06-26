@@ -533,15 +533,32 @@ function translitSuffix(s: string): string {
 /**
  * Извлекает «значащий» суффикс-букву/код из имени сырья.
  * "Витамин А" → "а", "Витамин D3" → "d3", "Сульфат марганца" → null.
+ * "Витамин D(кальция пантетонат) В3" → "в3" (пропускает скобки, берёт последний суффикс).
  * Нужен для точного различия "Витамин А" vs "Витамин Е", "D3" vs "В3".
  */
 function extractSuffix(s: string): string | null {
   const n = s.toLowerCase().trim();
-  // Паттерн: "витамин" / "vitamin" + пробел + буква(ы) или код
-  const m = n.match(/(?:витамин|вит|vitamin)\s+([a-zа-яё0-9]+)/i);
-  if (m) return m[1];
-  // Паттерн: последний токен — одна буква или буква+цифры (например "А", "D3", "В12")
+  // Паттерн 1: "витамин" + пропуск всего до последнего суффикса
+  // "витамин d(кальция пантетонат) в3" → "в3"
+  const m1 = n.match(/(?:витамин|вит|vitamin)\s+.*?([a-zа-яё0-9]+)$/i);
+  if (m1) return m1[1];
+  // Паттерн 2: последний токен — одна буква или буква+цифры (например "А", "D3", "В12")
   const tokens = n.split(/\s+/);
+  const last = tokens[tokens.length - 1];
+  if (/^[a-zа-яё][0-9]*$/.test(last) && last.length <= 4) return last;
+  return null;
+}
+
+/**
+ * Извлекает суффикс из ОРИГИНАЛЬНОГО имени (без нормализации раскладки).
+ * "Витамин D(кальция пантетонат) В3" → "в3" (оригинал, не "d3").
+ * Нужен чтобы "В3" (рус.) НЕ матчился на "D3" (лат.) — это разные витамины.
+ */
+function extractSuffixOriginal(s: string): string | null {
+  const lower = String(s).toLowerCase().trim();
+  const m = lower.match(/(?:витамин|вит|vitamin)\s+.*?([a-zа-яё0-9]+)$/i);
+  if (m) return m[1];
+  const tokens = lower.split(/\s+/);
   const last = tokens[tokens.length - 1];
   if (/^[a-zа-яё][0-9]*$/.test(last) && last.length <= 4) return last;
   return null;
@@ -746,20 +763,18 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
     if (byNormShort.has(nn)) { result.set(name, byNormShort.get(nn)!); continue; }
 
     // Суффиксная проверка для витаминов: "Витамин А" vs "Витамин Е"
-    // Простое сравнение: суффикс (последний токен) + первое слово (вит/витамин)
-    const inputSuffix = extractSuffix(name);
+    // Используем extractSuffixOriginal() для сравнения — "В3" (рус.) ≠ "D3" (лат.)
+    const inputSuffix = extractSuffixOriginal(name);
     if (inputSuffix) {
       const inputFirstWord = name.toLowerCase().trim().split(/\s+/)[0].replace(/ин$/, "");
       let suffixMatch: { uid: string } | null = null;
       let suffixMismatch = false;
       for (const m of materials) {
-        const fullName = normalizeRawName(m.full_name);
-        const shortName = normalizeRawName(m.short_name);
-        const candSuffix = extractSuffix(m.full_name) ?? extractSuffix(m.short_name);
+        const candSuffix = extractSuffixOriginal(m.full_name) ?? extractSuffixOriginal(m.short_name);
         if (!candSuffix) continue;
         const candFirstWord = m.full_name.toLowerCase().trim().split(/\s+/)[0].replace(/ин$/, "");
         if (candFirstWord === inputFirstWord || inputFirstWord.startsWith(candFirstWord) || candFirstWord.startsWith(inputFirstWord)) {
-          if (translitSuffix(candSuffix) === translitSuffix(inputSuffix) || candSuffix === inputSuffix) {
+          if (candSuffix === inputSuffix) {
             suffixMatch = { uid: m.raw_uid };
           } else {
             suffixMismatch = true;
