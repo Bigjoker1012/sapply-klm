@@ -519,6 +519,17 @@ export function normalizeRawName(s: string): string {
   return lower.split("").map(ch => RU_TO_LAT[ch] ?? ch).join("");
 }
 
+/** Транслитерация: кириллица → латиница (Д→D, В→B, А→A). Для сравнения суффиксов. */
+const CYR_TO_LAT: Record<string, string> = {
+  "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z",
+  "и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r",
+  "с":"s","т":"t","у":"u","ф":"f","х":"kh","ц":"ts","ч":"ch","ш":"sh",
+  "щ":"shch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
+};
+function translitSuffix(s: string): string {
+  return s.toLowerCase().split("").map(ch => CYR_TO_LAT[ch] ?? ch).join("");
+}
+
 /**
  * Извлекает «значащий» суффикс-букву/код из имени сырья.
  * "Витамин А" → "а", "Витамин D3" → "d3", "Сульфат марганца" → null.
@@ -748,7 +759,7 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
         if (!candSuffix) continue;
         const candFirstWord = m.full_name.toLowerCase().trim().split(/\s+/)[0].replace(/ин$/, "");
         if (candFirstWord === inputFirstWord || inputFirstWord.startsWith(candFirstWord) || candFirstWord.startsWith(inputFirstWord)) {
-          if (normalizeRawName(candSuffix) === normalizeRawName(inputSuffix) || candSuffix === inputSuffix) {
+          if (translitSuffix(candSuffix) === translitSuffix(inputSuffix) || candSuffix === inputSuffix) {
             suffixMatch = { uid: m.raw_uid };
           } else {
             suffixMismatch = true;
