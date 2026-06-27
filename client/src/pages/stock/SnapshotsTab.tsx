@@ -15,6 +15,8 @@ export default function SnapshotsTab({
   reload: () => Promise<void>;
 }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [kdFile, setKdFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const allSelected = snapshots.length > 0 && snapshots.every(s => sel.has(`${s.sheet}|${s.date}`));
   const toggleAll = () => {
@@ -46,15 +48,66 @@ export default function SnapshotsTab({
     }
   };
 
+  const handleKdUpload = async () => {
+    if (!kdFile) return;
+    setBusy(true);
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", kdFile);
+      const r = await axios.post(`${API}/upload/lipkovskaya-kd`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      flash(`✅ ${r.data.message}`);
+      setKdFile(null);
+      await reload();
+    } catch (e: any) {
+      flash(`❌ ${e.response?.data?.error || 'Ошибка загрузки'}`);
+    } finally {
+      setBusy(false);
+      setUploading(false);
+    }
+  };
+
   return (
     <section>
+      {/* Блок загрузки */}
+      <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 mb-4">
+        <h3 className="text-sm font-semibold text-white mb-2">📥 Загрузить ведомость по партиям (КД)</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Файл из 1С: «Ведомость по партиям товаров на складах». Автоматически распознаёт
+          наименования, партии и остатки. Не-сырьё отсеивается автоматически.
+        </p>
+        <div className="flex items-end gap-3">
+          <div className="flex-1">
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={e => setKdFile(e.target.files?.[0] || null)}
+              className="text-xs text-gray-300 w-full"
+            />
+            {kdFile && (
+              <p className="text-xs text-gray-400 mt-1 truncate">{kdFile.name}</p>
+            )}
+          </div>
+          <button
+            onClick={handleKdUpload}
+            disabled={!kdFile || busy}
+            className="bg-yellow-700 hover:bg-yellow-600 text-white text-sm px-4 py-1.5 rounded disabled:opacity-40 transition whitespace-nowrap"
+          >
+            {uploading ? 'Обработка...' : 'Загрузить КД'}
+          </button>
+        </div>
+      </div>
+
+      {/* Список снимков */}
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-gray-400 max-w-2xl">
-          Удаление снимка убирает все его строки из остатков (например, ошибочную загрузку).
+          Загруженные снимки остатков. Удаление убирает все строки из остатков.
         </p>
         <button onClick={bulkDelete} disabled={!sel.size || busy}
           className="text-xs border border-red-600 text-red-300 px-2 py-1 rounded hover:bg-red-500/10 disabled:opacity-30 whitespace-nowrap ml-3">
-          Удалить выбранные
+          Удалить выбранные ({sel.size})
         </button>
       </div>
       <div className="overflow-x-auto border border-gray-800 rounded-lg">
