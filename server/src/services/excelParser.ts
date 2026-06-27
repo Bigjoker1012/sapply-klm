@@ -83,22 +83,44 @@ export function parseKdExcel(buffer: Buffer): KdRow[] {
   }
   if (qtyCol < 0) qtyCol = 7;
 
+  // Определяем колонку с наименованием: ищем строку «Номенклатура» в шапке.
+  let nameCol = 0;
+  for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    const row = rows[r];
+    if (!row) continue;
+    for (let c = 0; c < row.length; c++) {
+      if (/^номенклатура/i.test(String(row[c] || "").trim())) {
+        nameCol = c;
+        break;
+      }
+    }
+    if (nameCol > 0) break;
+  }
+
+  // Определяем колонки дат (серия/партия): ищем «Дата поставки» / «Срок годности»
+  let dateCol1 = nameCol + 1;
+  let dateCol2 = nameCol + 2;
+  for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    const row = rows[r];
+    if (!row) continue;
+    for (let c = 0; c < row.length; c++) {
+      if (/^дата поставки/i.test(String(row[c] || "").trim())) dateCol1 = c;
+      if (/^срок годности/i.test(String(row[c] || "").trim())) dateCol2 = c;
+    }
+  }
+
   const results: KdRow[] = [];
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     if (!row) continue;
 
-    const vendorName = String(row[0] || "").trim();
+    const vendorName = String(row[nameCol] || "").trim();
     if (!vendorName || vendorName.length < 3) continue;
     if (KD_SKIP_RE.test(vendorName)) continue;
-    // Пропускаем чисто числовые ячейки (1500, 6 799, 1,500.000 и т.п.) — это
-    // суммы/количества, ошибочно попавшие в колонку наименования, а не сырьё.
     if (/^[\d\s.,]+$/.test(vendorName)) continue;
-    // Строки серий (партий) содержат даты в col B/C — это не номенклатура.
-    if (KD_DATE_RE.test(String(row[1] || "").trim()) ||
-        KD_DATE_RE.test(String(row[2] || "").trim())) continue;
-    // Строки документа движения дублируют текст «X, X» — отбрасываем.
+    if (KD_DATE_RE.test(String(row[dateCol1] || "").trim()) ||
+        KD_DATE_RE.test(String(row[dateCol2] || "").trim())) continue;
     if (isKdDocRow(vendorName)) continue;
 
     const qtyRaw = row[qtyCol];
