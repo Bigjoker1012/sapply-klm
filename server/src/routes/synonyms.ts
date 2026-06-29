@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import {
   readRange, getAllRawMaterials, parseAliasRows,
   getUnresolvedQueue, resolveQueueItem, addAlias,
+  writePlantStock, writeLipStockBatch,
 } from "../services/sheetsService";
 import { suggestMatches } from "../services/aiMatcher";
 
@@ -70,7 +71,19 @@ router.post("/confirm", async (req: Request, res: Response) => {
   try {
     const uid = raw_uid || rawMaterialId;
     if (synonym) await addAlias(uid, synonym, "manual");
-    if (queueId) await resolveQueueItem(queueId);
+    if (queueId) {
+      const queueItem = await resolveQueueItem(queueId);
+      // Если в очереди было количество и склад — записываем остаток
+      if (queueItem && queueItem.qty > 0 && uid) {
+        const sourceType = queueItem.source_warehouse || "polotsk";
+        const stockRow = { raw_uid: uid, name_from_source: queueItem.text, qty: queueItem.qty, source_file: "queue_confirm" };
+        if (sourceType === "polotsk") {
+          await writePlantStock([stockRow]);
+        } else {
+          await writeLipStockBatch([{ ...stockRow, source: "queue_confirm" }]);
+        }
+      }
+    }
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -51,8 +51,7 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
     const matchMap = await matchBatch(parsed.map(r => r.rawName));
 
     const stockRows: { raw_uid: string; name_from_source: string; qty: number; source_file: string }[] = [];
-    const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
-    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string; qty: number; source_warehouse: string }[] = [];
     let matched = 0;
     let unmatched = 0;
 
@@ -60,17 +59,17 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
       const rawUid = matchMap.get(row.rawName);
       if (rawUid) {
         stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source_file: up.originalname });
-                matched++;
+        matched++;
       } else {
-        queueItems.push({ text: row.rawName, source_type: "polotsk", file_name: up.originalname });
+        queueItems.push({ text: row.rawName, source_type: "polotsk", file_name: up.originalname, qty: row.quantity, source_warehouse: "polotsk" });
         unmatched++;
       }
     }
 
-    // 2. Write stock + aliases + queue in parallel (each is 1-2 calls)
+    // 2. Write stock + queue in parallel
     await Promise.all([
       stockRows.length ? writePlantStock(stockRows) : Promise.resolve(),
-            queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
 
     await saveDocument("polotsk", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
@@ -93,8 +92,7 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
     const matchMap = await matchBatch(parsed.map(r => r.rawName));
 
     const stockRows: { raw_uid: string; name_from_source: string; qty: number; source: string }[] = [];
-    const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
-    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string; qty: number; source_warehouse: string }[] = [];
     let matched = 0;
     let unmatched = 0;
 
@@ -102,17 +100,17 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
       const rawUid = matchMap.get(row.rawName);
       if (rawUid) {
         stockRows.push({ raw_uid: rawUid, name_from_source: row.rawName, qty: row.quantity, source: "excel_file" });
-                matched++;
+        matched++;
       } else {
-        queueItems.push({ text: row.rawName, source_type: "lipkovskaya", file_name: up.originalname });
+        queueItems.push({ text: row.rawName, source_type: "lipkovskaya", file_name: up.originalname, qty: row.quantity, source_warehouse: "lipkovskaya" });
         unmatched++;
       }
     }
 
-    // 2. Write all in parallel (3 API calls total vs N×4 before)
+    // 2. Write all in parallel
     await Promise.all([
       writeLipStockBatch(stockRows),
-            queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
     ]);
 
     await saveDocument("lipkovskaya", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
@@ -284,8 +282,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
 
     const batchRows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string }[] = [];
     const stockAggregate = new Map<string, { name: string; qty: number }>();
-    const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
-    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string; qty: number; source_warehouse: string }[] = [];
     let matched = 0;
     let unmatched = 0;
 
@@ -296,12 +293,9 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
         // Aggregate for LipStock
         const cur = stockAggregate.get(rawUid);
         stockAggregate.set(rawUid, { name: row.baseName, qty: (cur?.qty ?? 0) + row.qty });
-        // Register baseName as alias if it came with a batch suffix
-        if (row.batchCode) {
-                  }
         matched++;
       } else {
-        queueItems.push({ text: row.baseName, source_type: "lipkovskaya_kd", file_name: up.originalname });
+        queueItems.push({ text: row.baseName, source_type: "lipkovskaya_kd", file_name: up.originalname, qty: row.qty, source_warehouse: "lipkovskaya" });
         unmatched++;
       }
     }

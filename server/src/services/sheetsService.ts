@@ -845,14 +845,14 @@ export async function addToReviewQueue(text: string, source_type: string, file_n
  * Add multiple review queue items in a single append call.
  */
 export async function addToReviewQueueBatch(
-  items: { text: string; source_type: string; file_name: string }[]
+  items: { text: string; source_type: string; file_name: string; qty?: number; source_warehouse?: string }[]
 ): Promise<void> {
   if (!items.length) return;
   // Не добавляем то, что уже исключено пользователем («не сырьё»), и не плодим
   // дубли с уже висящими в очереди нерешёнными позициями.
   const [excluded, existing] = await Promise.all([
     getExcludedSet(),
-    readRange("ReviewQueue", "A2:F2000"),
+    readRange("ReviewQueue", "A2:H2000"),
   ]);
   const queued = new Set<string>();
   for (const r of existing) {
@@ -867,6 +867,7 @@ export async function addToReviewQueueBatch(
     rows.push([
       `RQ_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
       it.text, it.source_type, it.file_name, "FALSE", new Date().toISOString(),
+      it.qty ?? "", it.source_warehouse ?? "",
     ]);
   });
   if (rows.length) await appendRows("ReviewQueue", rows);
@@ -874,7 +875,7 @@ export async function addToReviewQueueBatch(
 
 export async function getUnresolvedQueue(): Promise<any[]> {
   const [rows, excluded] = await Promise.all([
-    readRange("ReviewQueue", "A2:F2000"),
+    readRange("ReviewQueue", "A2:H2000"),
     getExcludedSet(),
   ]);
   return rows
@@ -890,17 +891,24 @@ export async function getUnresolvedQueue(): Promise<any[]> {
       source_type: r[2],
       file_name: r[3],
       created_at: r[5],
+      qty: r[6] != null ? parseFloat(String(r[6]).replace(",", ".")) || 0 : 0,
+      source_warehouse: r[7] || "",
     }));
 }
 
-export async function resolveQueueItem(queue_id: string): Promise<void> {
-  const rows = await readRange("ReviewQueue", "A2:F2000");
+export async function resolveQueueItem(queue_id: string): Promise<{ text: string; qty: number; source_warehouse: string } | null> {
+  const rows = await readRange("ReviewQueue", "A2:H2000");
   for (let i = 0; i < rows.length; i++) {
     if (rows[i][0] === queue_id) {
       await writeRange("ReviewQueue", `E${i + 2}:E${i + 2}`, [["TRUE"]]);
-      return;
+      return {
+        text: String(rows[i][1] || ""),
+        qty: rows[i][6] != null ? parseFloat(String(rows[i][6]).replace(",", ".")) || 0 : 0,
+        source_warehouse: String(rows[i][7] || ""),
+      };
     }
   }
+  return null;
 }
 
 /** Помечает обработанными ВСЕ нерешённые строки очереди с данным текстом. */
