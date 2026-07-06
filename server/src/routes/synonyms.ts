@@ -36,6 +36,22 @@ router.post("/", async (req: Request, res: Response) => {
   try {
     const uid = raw_uid || rawMaterialId;
     await addAlias(uid, synonym, source || "manual");
+    // Если синоним совпадает с текстом в очереди — записываем остаток
+    if (uid && synonym) {
+      const queue = await getUnresolvedQueue();
+      const match = queue.find(q => q.original_text === synonym);
+      if (match && match.qty > 0) {
+        const sourceType = match.source_warehouse || "polotsk";
+        const stockRow = { raw_uid: uid, name_from_source: synonym, qty: match.qty, source_file: "synonym_confirm" };
+        if (sourceType === "polotsk") {
+          await writePlantStock([stockRow]);
+        } else {
+          await writeLipStockBatch([{ ...stockRow, source: "synonym_confirm" }]);
+        }
+        // Помечаем очередь как обработанную
+        if (match.id) await resolveQueueItem(match.id);
+      }
+    }
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
