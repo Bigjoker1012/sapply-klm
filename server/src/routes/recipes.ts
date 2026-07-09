@@ -160,14 +160,14 @@ router.post("/:uid/partial-archive", async (req: Request, res: Response) => {
       const recipes = await getRecipesList();
       const rec = recipes.find(r => r.recipe_uid === req.params.uid);
       if (!rec) return { kind: "notFound" as const };
-      if (rec.status === RECIPE_STATUS.CANCELLED || rec.status === RECIPE_STATUS.ARCHIVE) {
+      if (rec.status === RECIPE_STATUS.CANCELLED || rec.status === RECIPE_STATUS.ARCHIVED) {
         return { kind: "badStatus" as const, status: rec.status };
       }
 
       const originalTons = rec.batch_t || 1;
       if (produced >= originalTons) {
         // Полная выработка — просто архивируем
-        const { found } = await transitionRecipe(req.params.uid, RECIPE_STATUS.ARCHIVE);
+        const { found } = await transitionRecipe(req.params.uid, RECIPE_STATUS.ARCHIVED);
         return { kind: "fullArchive" as const, found };
       }
 
@@ -187,7 +187,7 @@ router.post("/:uid/partial-archive", async (req: Request, res: Response) => {
       if (needLines.length) await writeNeedFromRecipe(req.params.uid, needLines);
 
       // 4. Архивируем текущий рецепт с уменьшенным batch_t
-      await setRecipeStatus(req.params.uid, RECIPE_STATUS.ARCHIVE);
+      await setRecipeStatus(req.params.uid, RECIPE_STATUS.ARCHIVED);
       // Обновляем batch_t и RecipeLines в архивном рецепте
       const { writeRange } = await import("../services/sheetsService");
       const allRecipes = await readRange("Recipes", "A2:M5000");
