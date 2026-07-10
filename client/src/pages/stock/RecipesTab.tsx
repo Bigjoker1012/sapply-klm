@@ -261,6 +261,16 @@ export default function RecipesTab({
                   </span>
                 </td>
                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                  {r.status !== 'архив' && r.status !== 'отменён' && (
+                    <button
+                      onClick={() => { setArchiveUid(r.recipe_uid); setArchiveRecipe(r); setArchiveValue(String(r.batch_t || '')); }}
+                      disabled={busy}
+                      className="text-xs text-blue-300 hover:text-blue-100 mr-2 disabled:opacity-40"
+                      title="Разбить на части: выработка + остаток"
+                    >
+                      Разбить
+                    </button>
+                  )}
                   <select
                     value=""
                     disabled={busy}
