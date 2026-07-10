@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Recipe, fmt, STATUS_STYLE } from './types';
 
@@ -33,6 +33,8 @@ const FILTER_LABEL: Record<Filter, string> = {
   all: 'Все',
 };
 
+type SortDir = 'asc' | 'desc' | null;
+
 export default function RecipesTab({
   recipes, loading, busy, setBusy, flash, reload,
 }: {
@@ -45,13 +47,8 @@ export default function RecipesTab({
 }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<Filter>('active');
-  const [editingUid, setEditingUid] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
-  const editRef = useRef<HTMLInputElement>(null);
-  // Модалка частичной выработки
-  const [archiveUid, setArchiveUid] = useState<string | null>(null);
-  const [archiveRecipe, setArchiveRecipe] = useState<Recipe | null>(null);
-  const [archiveValue, setArchiveValue] = useState('');
+  const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const counts = recipes.reduce(
     (acc, r) => { acc[categoryOf(r.status)]++; acc.all++; return acc; },
@@ -61,13 +58,32 @@ export default function RecipesTab({
     ? recipes
     : recipes.filter(r => categoryOf(r.status) === filter);
 
-  const changeFilter = (f: Filter) => { setFilter(f); setSel(new Set()); };
+  // Сортировка по дате
+  const sorted = [...view].sort((a, b) => {
+    if (!sortDir) return 0;
+    const da = a.date || '';
+    const db = b.date || '';
+    return sortDir === 'asc' ? da.localeCompare(db) : db.localeCompare(da);
+  });
 
-  // Сверка выбора с видимыми строками: после смены статуса/выработки рецепт мог
-  // уйти в другую категорию и пропасть из таблицы — из выбора его тоже убираем,
-  // чтобы групповые кнопки не работали по невидимым строкам.
+  const changeFilter = (f: Filter) => { setFilter(f); setSel(new Set()); setSortDir(null); };
+
+  const toggleSort = () => setSortDir(prev => prev === 'asc' ? 'desc' : prev === 'desc' ? null : 'asc');
+
+  const useCollapse = filter !== 'active';
+  const toggleCollapse = (uid: string) => {
+    const next = new Set(collapsed);
+    next.has(uid) ? next.delete(uid) : next.add(uid);
+    setCollapsed(next);
+  };
+  const allExpanded = sorted.every(r => !collapsed.has(r.recipe_uid));
+  const toggleAllCollapse = () => {
+    setCollapsed(allExpanded ? new Set(sorted.map(r => r.recipe_uid)) : new Set());
+  };
+
+  // Сверка выбора с видимыми строками
   useEffect(() => {
-    const visible = new Set(view.map(r => r.recipe_uid));
+    const visible = new Set(sorted.map(r => r.recipe_uid));
     setSel(prev => {
       let changed = false;
       const next = new Set<string>();
@@ -75,7 +91,7 @@ export default function RecipesTab({
       return changed ? next : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recipes, filter]);
+  }, [recipes, filter, sortDir]);
 
   const allSelected = view.length > 0 && view.every(r => sel.has(r.recipe_uid));
   const toggleAll = () => {
@@ -101,49 +117,18 @@ export default function RecipesTab({
     }
   };
 
-  const confirmArchive = async () => {
-    if (!archiveUid) return;
-    const produced = parseFloat(archiveValue.replace(',', '.'));
-    if (!Number.isFinite(produced) || produced <= 0) {
-      flash('❌ Некорректное число тонн');
-      return;
-    }
-    setArchiveUid(null);
-    setArchiveRecipe(null);
-    setArchiveValue('');
+  const editTons = async (r: Recipe) => {
+    const input = prompt(
+      `Новая выработка (т) для «${r.code || r.full_name || r.recipe_uid}». Текущая: ${r.batch_t}.\n` +
+      `Расход и потребность пересчитаются. Нехватка склада не блокирует — остаток может уйти в минус.`,
+      String(r.batch_t || ''),
+    );
+    if (input == null) return;
+    const tons = parseFloat(input.replace(',', '.'));
+    if (!Number.isFinite(tons) || tons <= 0) { flash('❌ Некорректное число тонн'); return; }
     setBusy(true);
     try {
-      const res = await axios.post(`${API}/recipes/${archiveUid}/partial-archive`, { produced_tons: produced });
-      flash(`✅ ${res.data.message}`);
-      await reload();
-    } catch (e: any) {
-      flash(`❌ ${e.response?.data?.error || 'Ошибка'}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const startEdit = (r: Recipe) => {
-    setEditingUid(r.recipe_uid);
-    setEditValue(String(r.batch_t || ''));
-    setTimeout(() => editRef.current?.focus(), 50);
-  };
-
-  const cancelEdit = () => {
-    setEditingUid(null);
-    setEditValue('');
-  };
-
-  const saveEdit = async (uid: string) => {
-    const tons = parseFloat(editValue.replace(',', '.'));
-    if (!Number.isFinite(tons) || tons <= 0) {
-      flash('❌ Некорректное число тонн');
-      return;
-    }
-    setEditingUid(null);
-    setBusy(true);
-    try {
-      await axios.post(`${API}/recipes/${uid}/tons`, { tons });
+      await axios.post(`${API}/recipes/${r.recipe_uid}/tons`, { tons });
       flash('✅ Выработка обновлена, остатки и потребность пересчитаны');
       await reload();
     } catch (e: any) {
@@ -183,10 +168,26 @@ export default function RecipesTab({
             <span className="ml-1 text-gray-500">{counts[f]}</span>
           </button>
         ))}
+        {filter !== 'active' && (
+          <button onClick={toggleSort}
+            className={`text-xs px-2 py-1 rounded border transition ml-2 ${
+              sortDir
+                ? 'bg-blue-500/15 text-blue-200 border-blue-500/50'
+                : 'border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'
+            }`}>
+            {sortDir === 'asc' ? 'Дата ↑' : sortDir === 'desc' ? 'Дата ↓' : 'Дата'}
+          </button>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <span className="text-xs text-gray-400 mr-auto">
-          Выбрано: {sel.size}. Рецепты не удаляются — меняется только статус.
+          {sorted.length} рецептов. Выбрано: {sel.size}. Рецепты не удаляются — меняется только статус.
+          {useCollapse && (
+            <button onClick={toggleAllCollapse}
+              className="ml-2 text-blue-400 hover:text-blue-300 underline">
+              {allExpanded ? 'Свернуть все' : 'Развернуть все'}
+            </button>
+          )}
         </span>
         <button onClick={() => bulk('plan')} disabled={!sel.size || busy}
           className="text-xs border border-blue-600 text-blue-300 px-2 py-1 rounded hover:bg-blue-500/10 disabled:opacity-30">
@@ -217,78 +218,63 @@ export default function RecipesTab({
             </tr>
           </thead>
           <tbody>
-            {view.map(r => (
-              <tr key={r.recipe_uid} className="border-t border-gray-800">
-                <td className="px-3 py-1.5 text-center">
-                  <input type="checkbox" checked={sel.has(r.recipe_uid)}
-                    onChange={() => toggle(r.recipe_uid)} />
-                </td>
-                <td className="px-3 py-1.5">
-                  <div className="text-white">{r.code || r.full_name || r.recipe_uid}</div>
-                  {r.full_name && r.full_name !== r.code && (
-                    <div className="text-xs text-gray-500">{r.full_name}</div>
-                  )}
-                </td>
-                <td className="px-3 py-1.5 text-gray-400">{r.date || '—'}</td>
-                <td className="px-3 py-1.5 text-right">
-                  {editingUid === r.recipe_uid ? (
-                    <input
-                      ref={editRef}
-                      type="text"
-                      value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') saveEdit(r.recipe_uid);
-                        if (e.key === 'Escape') cancelEdit();
-                      }}
-                      onBlur={() => saveEdit(r.recipe_uid)}
-                      className="w-20 text-right bg-gray-800 border border-blue-500 rounded px-1.5 py-0.5 text-white text-sm"
-                    />
-                  ) : (
-                    <button
-                      onClick={() => startEdit(r)}
-                      disabled={busy}
-                      className="text-gray-300 hover:text-white hover:underline disabled:opacity-40 cursor-pointer"
-                      title="Нажмите для изменения тоннажа"
-                    >
-                      {r.batch_t ? fmt(r.batch_t) : '—'}
-                    </button>
-                  )}
-                </td>
-                <td className="px-3 py-1.5">
-                  <span className={`text-xs border px-2 py-0.5 rounded ${STATUS_STYLE[r.status] || 'bg-gray-700/30 text-gray-300 border-gray-600'}`}>
-                    {r.status || '—'}
-                  </span>
-                </td>
-                <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                  {r.status !== 'архив' && r.status !== 'отменён' && (
-                    <button
-                      onClick={() => { setArchiveUid(r.recipe_uid); setArchiveRecipe(r); setArchiveValue(String(r.batch_t || '')); }}
-                      disabled={busy}
-                      className="text-xs text-blue-300 hover:text-blue-100 mr-2 disabled:opacity-40"
-                      title="Разбить на части: выработка + остаток"
-                    >
-                      Разбить
-                    </button>
-                  )}
-                  <select
-                    value=""
-                    disabled={busy}
-                    onChange={e => {
-                      const a = e.target.value as Action;
-                      e.target.value = '';
-                      if (a) changeStatus(r.recipe_uid, a);
-                    }}
-                    className="text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-gray-200 disabled:opacity-40">
-                    <option value="">Статус ▾</option>
-                    <option value="plan">{ACTION_LABEL.plan}</option>
-                    <option value="archive">{ACTION_LABEL.archive}</option>
-                    <option value="cancel">{ACTION_LABEL.cancel}</option>
-                  </select>
-                </td>
-              </tr>
-            ))}
-            {!view.length && !loading && (
+            {sorted.map(r => {
+              const isCollapsed = useCollapse && collapsed.has(r.recipe_uid);
+              return (
+                <tr key={r.recipe_uid} className="border-t border-gray-800">
+                  <td className="px-3 py-1.5 text-center">
+                    <input type="checkbox" checked={sel.has(r.recipe_uid)}
+                      onChange={() => toggle(r.recipe_uid)} />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <div className="flex items-center gap-2">
+                      {useCollapse && (
+                        <button onClick={() => toggleCollapse(r.recipe_uid)}
+                          className="text-gray-500 hover:text-gray-300 text-xs w-4">
+                          {isCollapsed ? '▶' : '▼'}
+                        </button>
+                      )}
+                      <div>
+                        <div className="text-white">{r.code || r.full_name || r.recipe_uid}</div>
+                        {r.full_name && r.full_name !== r.code && (
+                          <div className="text-xs text-gray-500">{r.full_name}</div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-1.5 text-gray-400">{r.date || '—'}</td>
+                  <td className="px-3 py-1.5 text-right text-gray-300">{r.batch_t ? fmt(r.batch_t) : '—'}</td>
+                  <td className="px-3 py-1.5">
+                    <span className={`text-xs border px-2 py-0.5 rounded ${STATUS_STYLE[r.status] || 'bg-gray-700/30 text-gray-300 border-gray-600'}`}>
+                      {r.status || '—'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                    {!isCollapsed && (
+                      <>
+                        <button onClick={() => editTons(r)} disabled={busy}
+                          className="text-xs text-blue-300 hover:underline mr-3 disabled:opacity-40">Выработка</button>
+                        <select
+                          value=""
+                          disabled={busy}
+                          onChange={e => {
+                            const a = e.target.value as Action;
+                            e.target.value = '';
+                            if (a) changeStatus(r.recipe_uid, a);
+                          }}
+                          className="text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-gray-200 disabled:opacity-40">
+                          <option value="">Статус ▾</option>
+                          <option value="plan">{ACTION_LABEL.plan}</option>
+                          <option value="archive">{ACTION_LABEL.archive}</option>
+                          <option value="cancel">{ACTION_LABEL.cancel}</option>
+                        </select>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {!sorted.length && !loading && (
               <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-500">
                 {recipes.length ? `Нет рецептов в категории «${FILTER_LABEL[filter]}»` : 'Нет рецептов'}
               </td></tr>
@@ -296,49 +282,6 @@ export default function RecipesTab({
           </tbody>
         </table>
       </div>
-
-      {/* Модалка частичной выработки */}
-      {archiveUid && archiveRecipe && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-white mb-4">Частичная выработка</h3>
-            <p className="text-sm text-gray-400 mb-2">
-              Рецепт: <span className="text-white">{archiveRecipe.code || archiveRecipe.full_name}</span>
-            </p>
-            <p className="text-sm text-gray-400 mb-4">
-              План: <span className="text-white">{fmt(archiveRecipe.batch_t)} т</span>
-            </p>
-            <label className="block text-sm text-gray-400 mb-1">Сколько тонн выработано:</label>
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              value={archiveValue}
-              onChange={e => setArchiveValue(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') confirmArchive(); if (e.key === 'Escape') { setArchiveUid(null); setArchiveRecipe(null); } }}
-              className="w-full bg-gray-700 border border-gray-500 rounded px-3 py-2 text-white mb-4"
-              autoFocus
-            />
-            <p className="text-xs text-gray-500 mb-4">
-              Остаток ({fmt((archiveRecipe.batch_t || 0) - parseFloat(archiveValue.replace(',', '.')) || 0)} т) будет создан как новый рецепт в статусе «план».
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => { setArchiveUid(null); setArchiveRecipe(null); }}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-600 rounded"
-              >
-                Отмена
-              </button>
-              <button
-                onClick={confirmArchive}
-                className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-500 rounded"
-              >
-                Архивировать
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   );
 }
