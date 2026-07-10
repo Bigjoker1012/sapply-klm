@@ -89,16 +89,6 @@ export default function RecipesTab({
 
   const changeStatus = async (uid: string, action: Action) => {
     if (action === 'cancel' && !confirm('Отменить рецепт? Сырьё вернётся в остатки.')) return;
-    if (action === 'archive') {
-      // Показываем модалку частичной выработки
-      const recipe = recipes.find(r => r.recipe_uid === uid);
-      if (recipe) {
-        setArchiveUid(uid);
-        setArchiveRecipe(recipe);
-        setArchiveValue(String(recipe.batch_t || ''));
-      }
-      return;
-    }
     setBusy(true);
     try {
       await axios.post(`${API}/recipes/${uid}/status`, { status: action });
