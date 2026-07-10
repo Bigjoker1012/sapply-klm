@@ -1373,6 +1373,40 @@ export async function deleteNeedByRecipe(recipe_uid: string): Promise<number> {
   return removed;
 }
 
+/**
+ * Удаляет рецепт и его строки (Recipes + RecipeLines + Need) по uid.
+ * Возвращает количество удалённых записей.
+ */
+export async function deleteRecipe(recipe_uid: string): Promise<number> {
+  // Удаляем строки рецепта
+  const lines = await readRange("RecipeLines", "A2:H5000");
+  const keepLines = lines.filter(r => String(r[0]) !== recipe_uid);
+  if (keepLines.length !== lines.length) {
+    await clearRange("RecipeLines", "A2:H5000");
+    if (keepLines.length) await writeRange("RecipeLines", `A2:H${keepLines.length + 1}`, keepLines);
+  }
+  // Удаляем потребность
+  await deleteNeedByRecipe(recipe_uid);
+  // Удаляем сам рецепт
+  const recipes = await readRange("Recipes", "A2:M5000");
+  const idx = recipes.findIndex(r => String(r[0]) === recipe_uid);
+  if (idx >= 0) {
+    await writeRange("Recipes", `A${idx + 2}:M${idx + 2}`, [["", "", "", "", "", "", "", "", "", "", "", "", ""]]);
+  }
+  return 1;
+}
+
+/**
+ * Массовое удаление рецептов по списку uid.
+ */
+export async function deleteRecipesBulk(recipe_uids: string[]): Promise<number> {
+  let removed = 0;
+  for (const uid of recipe_uids) {
+    removed += await deleteRecipe(uid);
+  }
+  return removed;
+}
+
 // ─── RECIPES ────────────────────────────────────────────────────────────────
 
 /**

@@ -19,7 +19,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import {
-  getRecipesList, getRecipeLines, setRecipeStatus, deleteNeedByRecipe,
+  getRecipesList, getRecipeLines, setRecipeStatus, deleteNeedByRecipe, deleteRecipe, deleteRecipesBulk,
   updateRecipeTons, writeNeedFromRecipe, RECIPE_STATUS, STOCK_CONSUMING_STATUSES,
   readRange,
 } from "../services/sheetsService";
@@ -297,6 +297,29 @@ router.post("/bulk", async (req: Request, res: Response) => {
     res.json({ ok: true, status, done, failed });
   } catch (err: any) {
     console.error("[recipes/bulk]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ─── Удаление рецептов ──────────────────────────────────────────────────
+
+router.delete("/:uid", async (req: Request, res: Response) => {
+  try {
+    const removed = await deleteRecipe(req.params.uid);
+    res.json({ ok: true, removed });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/bulk/delete", async (req: Request, res: Response) => {
+  const { uids } = req.body;
+  if (!Array.isArray(uids) || !uids.length) return res.status(400).json({ error: "uids[] обязателен" });
+  try {
+    const done = await deleteRecipesBulk(uids);
+    res.json({ ok: true, done });
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });

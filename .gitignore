@@ -8,3 +8,5 @@ data/
 *.db
 *.db-shm
 *.db-wal
+google_sa.json
+*.js
