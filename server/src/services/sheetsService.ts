@@ -767,13 +767,13 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
     const inputSuffix = extractSuffixOriginal(name);
       const isVitamin = /(?:витамин|вит|vitamin)/i.test(name);
     if (inputSuffix) {
-      const inputIsVit = (name.toLowerCase().trim().split(/\s+/)[0] || "").startsWith("вит");
+      const inputIsVit = /(?:витамин|вит|vitamin)/i.test(name);
       let suffixMatch: { uid: string } | null = null;
       let suffixMismatch = false;
       for (const m of materials) {
         const candSuffix = extractSuffixOriginal(m.full_name) ?? extractSuffixOriginal(m.short_name);
         if (!candSuffix) continue;
-        const candIsVit = (m.full_name.toLowerCase().trim().split(/\s+/)[0] || "").startsWith("вит");
+        const candIsVit = /(?:витамин|вит|vitamin)/i.test(m.full_name);
         if (inputIsVit && candIsVit) {
           if (translitSuffix(candSuffix) === translitSuffix(inputSuffix) || candSuffix === inputSuffix) {
             suffixMatch = { uid: m.raw_uid };
