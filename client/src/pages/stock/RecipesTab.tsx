@@ -253,7 +253,17 @@ export default function RecipesTab({
                   )}
                 </td>
                 <td className="px-3 py-1.5 text-gray-400">{r.date || '—'}</td>
-                <td className="px-3 py-1.5 text-right text-gray-300">{r.batch_t ? fmt(r.batch_t) : '—'}</td>
+                <td className="px-3 py-1.5 text-right">
+                  {filter !== 'cancelled' && r.batch_t ? (
+                    <button onClick={() => editTons(r)} disabled={busy}
+                      className="text-gray-300 hover:text-white hover:underline disabled:opacity-40 cursor-pointer"
+                      title="Нажмите для изменения выработки">
+                      {fmt(r.batch_t)}
+                    </button>
+                  ) : (
+                    <span className="text-gray-300">{r.batch_t ? fmt(r.batch_t) : '—'}</span>
+                  )}
+                </td>
                 <td className="px-3 py-1.5">
                   <span className={`text-xs border px-2 py-0.5 rounded ${STATUS_STYLE[r.status] || 'bg-gray-700/30 text-gray-300 border-gray-600'}`}>
                     {r.status || '—'}
@@ -265,8 +275,6 @@ export default function RecipesTab({
                       className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40">Удалить</button>
                   ) : (
                     <>
-                      <button onClick={() => editTons(r)} disabled={busy}
-                        className="text-xs text-blue-300 hover:underline mr-3 disabled:opacity-40">Выработка</button>
                       <select
                         value="" disabled={busy}
                         onChange={e => { const a = e.target.value as Action; e.target.value = ''; if (a) changeStatus(r.recipe_uid, a); }}
