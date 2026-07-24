@@ -92,12 +92,12 @@ export default function RecipesStock({ onBack }: { onBack?: () => void }) {
       {msg && <div className="mb-4 text-sm whitespace-pre-line">{msg}</div>}
       {loading && <div className="text-gray-400 text-sm mb-3">Загрузка…</div>}
 
-      {sub === 'stock' && <StockTab live={live} loading={loading} />}
+      {sub === 'stock' && <StockTab live={live} deficit={deficit} recipes={recipes} loading={loading} busy={busy} setBusy={setBusy} flash={flash} reload={load} />}
       {sub === 'recipes' && (
         <RecipesTab recipes={recipes} loading={loading} busy={busy}
           setBusy={setBusy} flash={flash} reload={load} />
       )}
-      {sub === 'deficit' && <DeficitTab deficit={deficit} loading={loading} />}
+      {sub === 'deficit' && <DeficitTab deficit={deficit} recipes={recipes} loading={loading} busy={busy} setBusy={setBusy} flash={flash} reload={load} />}
       {sub === 'snapshots' && (
         <SnapshotsTab snapshots={snapshots} loading={loading} busy={busy}
           setBusy={setBusy} flash={flash} reload={load} />
