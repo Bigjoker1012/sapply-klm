@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { Recipe, fmt, STATUS_STYLE } from './types';
 
@@ -42,10 +42,6 @@ export default function RecipesTab({
   const [filter, setFilter] = useState<Filter>('active');
   const [sortDir, setSortDir] = useState<SortDir>(null);
   const [listExpanded, setListExpanded] = useState(true);
-  // Модалка частичной выработки
-  const [archiveUid, setArchiveUid] = useState<string | null>(null);
-  const [archiveRecipe, setArchiveRecipe] = useState<Recipe | null>(null);
-  const [archiveValue, setArchiveValue] = useState('');
 
   const counts = recipes.reduce(
     (acc, r) => { acc[categoryOf(r.status)]++; acc.all++; return acc; },
@@ -78,6 +74,14 @@ export default function RecipesTab({
     });
   }, [recipes, filter, sortDir]);
 
+  // Суммарный тоннаж выбранных рецептов
+  const selectedTonnage = useMemo(() => {
+    if (sel.size === 0) return 0;
+    return sorted
+      .filter(r => sel.has(r.recipe_uid))
+      .reduce((sum, r) => sum + (r.batch_t || 0), 0);
+  }, [sel, sorted]);
+
   const allSelected = view.length > 0 && view.every(r => sel.has(r.recipe_uid));
   const toggleAll = () => setSel(allSelected ? new Set() : new Set(view.map(r => r.recipe_uid)));
   const toggle = (uid: string) => {
@@ -92,28 +96,6 @@ export default function RecipesTab({
     try {
       await axios.post(`${API}/recipes/${uid}/status`, { status: action });
       flash('✅ Статус изменён');
-      await reload();
-    } catch (e: any) {
-      flash(`❌ ${e.response?.data?.error || 'Ошибка'}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const confirmArchive = async () => {
-    if (!archiveUid) return;
-    const produced = parseFloat(archiveValue.replace(',', '.'));
-    if (!Number.isFinite(produced) || produced <= 0) {
-      flash('❌ Некорректное число тонн');
-      return;
-    }
-    setArchiveUid(null);
-    setArchiveRecipe(null);
-    setArchiveValue('');
-    setBusy(true);
-    try {
-      const res = await axios.post(`${API}/recipes/${archiveUid}/partial-archive`, { produced_tons: produced });
-      flash(`✅ ${res.data.message}`);
       await reload();
     } catch (e: any) {
       flash(`❌ ${e.response?.data?.error || 'Ошибка'}`);
@@ -260,7 +242,12 @@ export default function RecipesTab({
               <th className="text-left px-3 py-2 cursor-pointer select-none hover:text-gray-200" onClick={toggleSort}>
                 Дата {sortDir === 'asc' ? '↑' : sortDir === 'desc' ? '↓' : ''}
               </th>
-              <th className="text-right px-3 py-2">Выработка, т</th>
+              <th className="text-right px-3 py-2">
+                Выработка, т
+                {sel.size > 0 && (
+                  <span className="ml-2 text-green-400 font-normal">Выбрано {fmt(selectedTonnage)} т</span>
+                )}
+              </th>
               <th className="text-left px-3 py-2">Статус</th>
               <th className="text-right px-3 py-2">Действия</th>
             </tr>
@@ -279,17 +266,7 @@ export default function RecipesTab({
                   )}
                 </td>
                 <td className="px-3 py-1.5 text-gray-400">{r.date || '—'}</td>
-                <td className="px-3 py-1.5 text-right">
-                  {filter !== 'cancelled' && r.batch_t ? (
-                    <button onClick={() => editTons(r)} disabled={busy}
-                      className="text-gray-300 hover:text-white hover:underline disabled:opacity-40 cursor-pointer"
-                      title="Нажмите для изменения выработки">
-                      {fmt(r.batch_t)}
-                    </button>
-                  ) : (
-                    <span className="text-gray-300">{r.batch_t ? fmt(r.batch_t) : '—'}</span>
-                  )}
-                </td>
+                <td className="px-3 py-1.5 text-right text-gray-300">{r.batch_t ? fmt(r.batch_t) : '—'}</td>
                 <td className="px-3 py-1.5">
                   <span className={`text-xs border px-2 py-0.5 rounded ${STATUS_STYLE[r.status] || 'bg-gray-700/30 text-gray-300 border-gray-600'}`}>
                     {r.status || '—'}
@@ -301,11 +278,8 @@ export default function RecipesTab({
                       className="text-xs text-red-400 hover:text-red-300 disabled:opacity-40">Удалить</button>
                   ) : (
                     <>
-                      <button onClick={() => { setArchiveUid(r.recipe_uid); setArchiveRecipe(r); setArchiveValue(String(r.batch_t || '')); }} disabled={busy}
-                        className="text-xs text-blue-300 hover:text-blue-100 mr-2 disabled:opacity-40"
-                        title="Разбить на части: выработка + остаток">
-                        Разбить
-                      </button>
+                      <button onClick={() => editTons(r)} disabled={busy}
+                        className="text-xs text-blue-300 hover:underline mr-3 disabled:opacity-40">Выработка</button>
                       <select
                         value="" disabled={busy}
                         onChange={e => { const a = e.target.value as Action; e.target.value = ''; if (a) changeStatus(r.recipe_uid, a); }}
@@ -335,49 +309,6 @@ export default function RecipesTab({
           </tbody>
         </table>
       </div>
-
-      {/* Модалка частичной выработки */}
-      {archiveUid && archiveRecipe && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-white mb-4">Частичная выработка</h3>
-            <p className="text-sm text-gray-400 mb-2">
-              Рецепт: <span className="text-white">{archiveRecipe.code || archiveRecipe.full_name}</span>
-            </p>
-            <p className="text-sm text-gray-400 mb-4">
-              План: <span className="text-white">{fmt(archiveRecipe.batch_t)} т</span>
-            </p>
-            <label className="block text-sm text-gray-400 mb-1">Сколько тонн выработано:</label>
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              value={archiveValue}
-              onChange={e => setArchiveValue(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') confirmArchive(); if (e.key === 'Escape') { setArchiveUid(null); setArchiveRecipe(null); } }}
-              className="w-full bg-gray-700 border border-gray-500 rounded px-3 py-2 text-white mb-4"
-              autoFocus
-            />
-            <p className="text-xs text-gray-500 mb-4">
-              Остаток ({fmt((archiveRecipe.batch_t || 0) - parseFloat(archiveValue.replace(',', '.')) || 0)} т) будет создан как новый рецепт в статусе «план».
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => { setArchiveUid(null); setArchiveRecipe(null); }}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-600 rounded"
-              >
-                Отмена
-              </button>
-              <button
-                onClick={confirmArchive}
-                className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-500 rounded"
-              >
-                Архивировать
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   );
 }
