@@ -157,9 +157,9 @@ const PYTHON = resolvePython();
 
 function resolveOcrScript(): string {
   const candidates = [
+    resolve(process.cwd(), 'server/scripts/parse_recipe.py'),
     join(__dirname, 'ocr_recipe.py'),
     resolve(process.cwd(), 'server/src/services/ocr_recipe.py'),
-    resolve(process.cwd(), 'server/scripts/parse_recipe.py'),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
