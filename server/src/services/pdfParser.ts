@@ -244,6 +244,7 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
   const tmpFile = join(tmpdir(), `klm_recipe_${Date.now()}.pdf`);
   try {
     await writeFile(tmpFile, buffer);
+    console.log(`[recipe] OCR: python=${PYTHON}, script=${OCR_SCRIPT}, file=${tmpFile}`);
 
     const { stdout, stderr } = await execFileAsync(
       PYTHON,
@@ -251,11 +252,14 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
       { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }
     );
 
+    console.log(`[recipe] OCR stdout len=${stdout?.length}, stderr=${stderr?.slice(0, 200)}`);
+
     if (!stdout.trim()) {
       throw new Error(`OCR script returned empty output. stderr: ${stderr?.slice(0, 300)}`);
     }
 
     const parsed = JSON.parse(stdout);
+    console.log(`[recipe] OCR parsed: code=${parsed.code}, rows=${parsed.rows?.length}, name=${parsed.name}`);
 
     if (parsed.error) {
       throw new Error(`OCR error: ${parsed.error}`);
