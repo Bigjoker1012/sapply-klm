@@ -142,6 +142,19 @@ function parseRecipeFromText(text: string): ParsedRecipe | null {
  *      (репо целиком есть в деплое, запуск всегда из корня).
  * Первый существующий путь — выигрывает.
  */
+/**
+ * Резолвим Python: venv с pymupdf → системный python3.
+ * На сервере pymupdf установлен в /opt/sapply-klm/pdf-venv/,
+ * локально может быть глобально.
+ */
+function resolvePython(): string {
+  const venvPy = '/opt/sapply-klm/pdf-venv/bin/python3';
+  if (existsSync(venvPy)) return venvPy;
+  return 'python3';
+}
+
+const PYTHON = resolvePython();
+
 function resolveOcrScript(): string {
   const candidates = [
     join(__dirname, 'ocr_recipe.py'),
@@ -150,7 +163,6 @@ function resolveOcrScript(): string {
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
-  // Возвращаем первый кандидат — execFile отдаст понятную ошибку с путём.
   return candidates[0];
 }
 
@@ -233,7 +245,7 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
     await writeFile(tmpFile, buffer);
 
     const { stdout, stderr } = await execFileAsync(
-      'python3',
+      PYTHON,
       [OCR_SCRIPT, tmpFile],
       { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }
     );
