@@ -5,8 +5,8 @@ import { existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import pdfParse from 'pdf-parse';
-import { parseRecipeWithVision } from './aiMatcher';
 import { recipeFullName } from './excelParser';
+import https from 'https';
 
 const execFileAsync = promisify(execFile);
 
@@ -170,35 +170,120 @@ function resolveOcrScript(): string {
 const OCR_SCRIPT = resolveOcrScript();
 
 /**
- * Рендер первых страниц PDF в PNG (poppler pdftoppm) и возврат base64.
- * Нужно для vision-парсинга PDF без текстового слоя.
+ * Рендер первой страницы PDF в PNG через pymupdf (venv) и возврат base64.
+ * Заменяет pdftoppm (не установлен на сервере).
  */
-async function renderPdfToPngs(buffer: Buffer, maxPages = 2): Promise<string[]> {
-  // Уникальная директория на запрос (mkdtemp), чтобы исключить коллизии имён
-  // при параллельных загрузках и гарантированно удалить ВСЕ артефакты рендера.
+async function renderPdfToPngVenv(buffer: Buffer): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'klm_recipe_'));
   const pdfPath = join(dir, 'in.pdf');
   await writeFile(pdfPath, buffer);
   try {
-    await execFileAsync(
-      'pdftoppm',
-      ['-png', '-r', '200', '-f', '1', '-l', String(maxPages), pdfPath, join(dir, 'page')],
-      { timeout: 60_000, maxBuffer: 32 * 1024 * 1024 }
+    const { stdout } = await execFileAsync(
+      PYTHON,
+      ['-c', `
+import fitz, base64
+doc = fitz.open("${pdfPath.replace(/\\/g, '\\\\')}")
+page = doc[0]
+pix = page.get_pixmap(dpi=200)
+print(base64.b64encode(pix.tobytes("png")).decode())
+doc.close()
+`],
+      { timeout: 30_000, maxBuffer: 16 * 1024 * 1024 }
     );
-    // Читаем все сгенерированные PNG по содержимому каталога (имена нумеруются
-    // по-разному в зависимости от числа страниц), в стабильном порядке.
-    const files = (await readdir(dir))
-      .filter(f => f.startsWith('page') && f.endsWith('.png'))
-      .sort();
-    const pngs: string[] = [];
-    for (const f of files) {
-      const b = await readFile(join(dir, f));
-      pngs.push(b.toString('base64'));
-    }
-    return pngs;
+    return stdout.trim();
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * MiMo API vision: отправляет PNG base64 и возвращает JSON с ингредиентами.
+ */
+async function parseRecipeWithMiMoVision(imageBase64: string): Promise<ParsedRecipe | null> {
+  const apiKey = process.env.MIMO_API_KEY;
+  if (!apiKey) {
+    console.log('[recipe] MiMo vision: MIMO_API_KEY не задан, пропускаю');
+    return null;
+  }
+
+  const prompt = `Extract ALL ingredients from this feed recipe. Return ONLY valid JSON, no markdown:
+{"recipe_code":"...","recipe_name":"...","date":"...","batch_t":number,"concentration_pct":number,"ingredients":[{"code":"...","name":"...","percentage":number,"quantity_kg":number,"norm_g_per_t":number}]}`;
+
+  const body = JSON.stringify({
+    model: 'mimo-v2.5',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+        { type: 'text', text: prompt },
+      ],
+    }],
+    max_tokens: 8192,
+  });
+
+  return new Promise((resolve) => {
+    const url = new URL(process.env.MIMO_API_URL || 'https://token-plan-sgp.xiaomimimo.com/v1/chat/completions');
+    const req = https.request({
+      hostname: url.hostname,
+      port: url.port || 443,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 120_000,
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          if (json.error) {
+            console.error('[recipe] MiMo vision API error:', json.error.message || json.error);
+            resolve(null);
+            return;
+          }
+          let content = json.choices?.[0]?.message?.content || '';
+          // Strip markdown code fences
+          if (content.includes('```')) {
+            const parts = content.split('```');
+            content = parts[1] || '';
+            if (content.startsWith('json')) content = content.slice(4);
+          }
+          const parsed = JSON.parse(content.trim());
+          const rows: RecipeRow[] = (parsed.ingredients || []).map((r: any) => ({
+            rawName: r.name || r.code || '',
+            percentage: Number(r.percentage) || 0,
+            quantityPerTon: Number(r.quantity_kg) || 0,
+            pricePerKg: null,
+          }));
+          console.log(`[recipe] MiMo vision: rows=${rows.length}, code=${parsed.recipe_code}`);
+          resolve({
+            name: parsed.recipe_name || parsed.recipe_code || 'Рецепт',
+            code: parsed.recipe_code || '',
+            date: parsed.date || new Date().toISOString().split('T')[0],
+            batchKg: Number(parsed.batch_t) ? Number(parsed.batch_t) * 1000 : 1000,
+            rows,
+          });
+        } catch (e) {
+          console.error('[recipe] MiMo vision parse error:', (e as Error)?.message);
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', (e) => {
+      console.error('[recipe] MiMo vision request error:', e.message);
+      resolve(null);
+    });
+    req.on('timeout', () => {
+      console.error('[recipe] MiMo vision timeout');
+      req.destroy();
+      resolve(null);
+    });
+    req.write(body);
+    req.end();
+  });
 }
 
 export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
@@ -211,33 +296,20 @@ export async function parseRecipePdf(buffer: Buffer): Promise<ParsedRecipe> {
     console.warn("[recipe] текстовый слой недоступен, пробую vision:", (e as Error)?.message);
   }
 
-  // 2) Нет текстового слоя (текст вшит кривыми, частый случай 1С-премиксов):
-  //    рендерим страницу в картинку и читаем таблицу vision-моделью. Это
-  //    надёжнее tesseract на плотной многоколоночной таблице. Любой сбой
-  //    (нет ключа OpenAI, ошибка сети, пустой результат) → tesseract-фолбэк.
+  // 2) Нет текстового слоя — MiMo API vision (pymupdf → PNG → mimo-v2.5).
+  //    Сбой (нет ключа, ошибка сети, пустой результат) → tesseract-фолбэк.
   try {
-    const pngs = await renderPdfToPngs(buffer, 2);
-    console.log(`[recipe] vision: отрендерено страниц=${pngs.length}, ключ OpenAI=${process.env.OPENAI_API_KEY ? "есть" : "НЕТ"}`);
-    if (pngs.length) {
-      const ai = await parseRecipeWithVision(pngs);
-      console.log(`[recipe] vision: строк распознано=${ai?.rows.length ?? 0}`);
-      if (ai && ai.rows.length > 0) {
-        return {
-          name: ai.name,
-          code: ai.code,
-          date: ai.date,
-          batchKg: ai.batchKg,
-          rows: ai.rows.map(r => ({
-            rawName: r.rawName,
-            percentage: r.percentage,
-            quantityPerTon: r.quantityPerTon,
-            pricePerKg: r.pricePerKg,
-          })),
-        };
-      }
+    console.log('[recipe] MiMo vision: рендерю PDF в PNG через pymupdf...');
+    const pngBase64 = await renderPdfToPngVenv(buffer);
+    console.log(`[recipe] MiMo vision: PNG готов, size=${pngBase64.length} chars`);
+    const ai = await parseRecipeWithMiMoVision(pngBase64);
+    if (ai && ai.rows.length > 0) {
+      console.log(`[recipe] MiMo vision: строк распознано=${ai.rows.length}`);
+      return ai;
     }
+    console.log('[recipe] MiMo vision: 0 строк, fallback на tesseract');
   } catch (e) {
-    console.error("[recipe] vision-разбор не удался, пробую OCR:", (e as Error)?.message || e);
+    console.error("[recipe] MiMo vision не удался, пробую OCR:", (e as Error)?.message || e);
   }
 
   // 3) Сканы / запасной путь: рендер страницы в изображение + tesseract.
