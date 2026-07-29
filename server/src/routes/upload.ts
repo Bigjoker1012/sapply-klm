@@ -255,10 +255,12 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       return { recipeUid };
     });
 
-    // Архивацию документа делаем вне мьютекса — она не влияет на остатки.
-    await saveDocument("recipe", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer }, admission.recipeUid);
-
     res.json({ ok: true, recipeUid: admission.recipeUid, recipeName: parsed.name, total: parsed.rows.length, matched, unmatched, plant, batch_t });
+
+    // Архивацию документа делаем ПОСЛЕ ответа — она не влияет на остатки и не должна блокировать.
+    saveDocument("recipe", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer }, admission.recipeUid).catch(err => {
+      console.error("[upload/recipe] saveDocument failed (non-fatal):", err?.message);
+    });
   } catch (err: any) {
     // Логируем полную ошибку (в проде catch раньше молчал — причина была не видна).
     console.error("[upload/recipe] разбор рецепта упал:", err?.stack || err);

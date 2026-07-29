@@ -211,6 +211,7 @@ async function parseRecipeWithMiMoVision(imageBase64: string): Promise<ParsedRec
 
   const body = JSON.stringify({
     model: 'mimo-v2.5',
+    temperature: 0,
     messages: [{
       role: 'user',
       content: [
