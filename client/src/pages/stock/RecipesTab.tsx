@@ -23,7 +23,7 @@ const categoryOf = (status: string): Exclude<Filter, 'all'> =>
   STATUS_CATEGORY[String(status || '').trim().toLowerCase()] || 'active';
 
 const FILTER_LABEL: Record<Filter, string> = {
-  active: 'Активные', archive: 'Архив', cancelled: 'Отменённые', all: 'Все',
+  active: 'Активные', archive: 'В работе', cancelled: 'Отменённые', all: 'Все',
 };
 
 type SortDir = 'asc' | 'desc' | null;

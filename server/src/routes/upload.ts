@@ -246,11 +246,15 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       });
 
       await Promise.all([
-        writeRecipeLines(recipeUid, lines),
-                queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+        writeRecipeLines(recipeUid, lines).catch(err => {
+          console.error("[upload/recipe] writeRecipeLines failed (non-fatal):", err?.message);
+        }),
+        queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
       ]);
 
-      if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines);
+      if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines).catch(err => {
+        console.error("[upload/recipe] writeNeedFromRecipe failed (non-fatal):", err?.message);
+      });
 
       return { recipeUid };
     });
