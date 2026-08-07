@@ -206,19 +206,24 @@ async function parseRecipeWithMiMoVision(imageBase64: string): Promise<ParsedRec
     return null;
   }
 
-  const prompt = `Extract ALL ingredients from this feed recipe. Return ONLY valid JSON, no markdown:
+  const prompt = `Извлеки ВСЕ ингредиенты из этого рецепта комбикорма. Верни ТОЛЬКО валидный JSON, без markdown:
 {"recipe_code":"...","recipe_name":"...","date":"...","batch_t":number,"concentration_pct":number,"ingredients":[{"code":"...","name":"...","percentage":number,"quantity_kg":number,"norm_g_per_t":number}]}`;
+
+  const systemPrompt = `Ты — OCR-парсер рецептов комбикормов. Точность критически важна (это для производства). Извлекай данные точно как написано в документе. Названия ингредиентов и коды — КОПИРУЙ как в документе, не переводи.`;
 
   const body = JSON.stringify({
     model: 'mimo-v2.5',
     temperature: 0,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
-        { type: 'text', text: prompt },
-      ],
-    }],
+    messages: [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${imageBase64}` } },
+          { type: 'text', text: prompt },
+        ],
+      },
+    ],
     max_tokens: 8192,
   });
 
