@@ -251,6 +251,14 @@ async function computeDecisions(): Promise<Decision[]> {
     const cover_by_transfer = Math.min(r.lip_qty, polotsk_deficit);
     const cover_by_purchase = Math.max(0, need - on_hand);
 
+    // Если по рецептам дефицит — статус не может быть "Норма" или "На контроле".
+    let status = PLANNING_STATUS_RU[r.status];
+    if (expected_after_plan < 0) {
+      status = 'Срочно к закупке';
+    } else if (status === 'Норма' && cover_by_purchase > 0) {
+      status = 'К закупке';
+    }
+
     return {
       raw_uid: r.raw_uid,
       name: r.name,
@@ -263,7 +271,7 @@ async function computeDecisions(): Promise<Decision[]> {
       planned_need: r.planned_need,
       available_total,
       expected_after_plan,
-      status: PLANNING_STATUS_RU[r.status],
+      status,
       cover_by_transfer,
       cover_by_purchase,
     };
