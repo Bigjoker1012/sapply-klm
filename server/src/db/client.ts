@@ -12,6 +12,9 @@
  *   - prod: diff dev→prod при публикации Replit.
  * Поэтому здесь только подключение — никакого DDL при старте.
  */
+import dotenv from "dotenv";
+dotenv.config();
+
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
