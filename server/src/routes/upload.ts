@@ -286,7 +286,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
     // 1. Match ALL base names at once (2 API calls)
     const matchMap = await matchBatch(parsed.map(r => r.baseName));
 
-    const batchRows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string }[] = [];
+    const batchRows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string; expiry_date?: string; manufacture_date?: string }[] = [];
     const stockAggregate = new Map<string, { name: string; qty: number }>();
     const queueItems: { text: string; source_type: string; file_name: string; qty: number; source_warehouse: string }[] = [];
     let matched = 0;
@@ -295,7 +295,15 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
     for (const row of parsed) {
       const rawUid = matchMap.get(row.baseName);
       if (rawUid) {
-        batchRows.push({ raw_uid: rawUid, batch_code: row.batchCode, vendor_name: row.vendorName, qty: row.qty, source: "kd_file" });
+        batchRows.push({ 
+          raw_uid: rawUid, 
+          batch_code: row.batchCode, 
+          vendor_name: row.vendorName, 
+          qty: row.qty, 
+          source: "kd_file",
+          expiry_date: row.expiryDate,
+          manufacture_date: row.manufactureDate,
+        });
         // Aggregate for LipStock
         const cur = stockAggregate.get(rawUid);
         stockAggregate.set(rawUid, { name: row.baseName, qty: (cur?.qty ?? 0) + row.qty });

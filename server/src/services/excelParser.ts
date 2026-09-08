@@ -10,6 +10,8 @@ export interface KdRow {
   baseName: string;    // base without batch suffix ("Актиген мешок 25 кг.")
   batchCode: string;   // "IE002856" or ""
   qty: number;         // конечный остаток
+  expiryDate?: string; // срок годности (YYYY-MM-DD)
+  manufactureDate?: string; // дата поставки (YYYY-MM-DD)
 }
 
 const KD_BATCH_RE = /\s*,?\s*партия\s+(\S+)\s*$/i;
@@ -110,6 +112,19 @@ export function parseKdExcel(buffer: Buffer): KdRow[] {
   }
 
   const results: KdRow[] = [];
+  
+  // Helper to parse date from DD.MM.YY or DD.MM.YYYY format to YYYY-MM-DD
+  const parseDate = (val: any): string | undefined => {
+    if (!val) return undefined;
+    const s = String(val).trim();
+    const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+    if (!m) return undefined;
+    let year = parseInt(m[3], 10);
+    if (year < 100) year += 2000;
+    const month = m[2].padStart(2, '0');
+    const day = m[1].padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
@@ -119,8 +134,30 @@ export function parseKdExcel(buffer: Buffer): KdRow[] {
     if (!vendorName || vendorName.length < 3) continue;
     if (KD_SKIP_RE.test(vendorName)) continue;
     if (/^[\d\s.,]+$/.test(vendorName)) continue;
-    if (KD_DATE_RE.test(String(row[dateCol1] || "").trim()) ||
-        KD_DATE_RE.test(String(row[dateCol2] || "").trim())) continue;
+    
+    // Check if this is a series/batch row with dates (not a product row)
+    const hasDate1 = KD_DATE_RE.test(String(row[dateCol1] || "").trim());
+    const hasDate2 = KD_DATE_RE.test(String(row[dateCol2] || "").trim());
+    
+    // If this row has dates, it's a series row - extract expiry date and attach to previous batch
+    if (hasDate1 || hasDate2) {
+      // This is a series row with dates - extract expiry date
+      const expiryDate = parseDate(row[dateCol2]);
+      const manufactureDate = parseDate(row[dateCol1]);
+      
+      // Attach to the last batch entry if it exists
+      if (results.length > 0) {
+        const lastBatch = results[results.length - 1];
+        if (!lastBatch.expiryDate && expiryDate) {
+          lastBatch.expiryDate = expiryDate;
+        }
+        if (!lastBatch.manufactureDate && manufactureDate) {
+          lastBatch.manufactureDate = manufactureDate;
+        }
+      }
+      continue;
+    }
+    
     if (isKdDocRow(vendorName)) continue;
 
     const qtyRaw = row[qtyCol];

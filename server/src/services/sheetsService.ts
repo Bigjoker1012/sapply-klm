@@ -1137,25 +1137,25 @@ export async function writeLipStockBatch(
  * Replaces all today's rows for the given raw_uid set in one operation.
  */
 export async function writeLipBatchesBulk(
-  rows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string }[]
+  rows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string; expiry_date?: string; manufacture_date?: string }[]
 ): Promise<void> {
   if (!rows.length) return;
   await ensureSheets(["LipBatches"]);
   const today = new Date().toISOString().split("T")[0];
   let existing: any[][] = [];
-  try { existing = await readRange("LipBatches", "A2:G5000"); } catch {}
+  try { existing = await readRange("LipBatches", "A2:I5000"); } catch {}
   const keepRows = existing.filter(r => toIsoSnapshotDate(r[0]) !== today);
-  const newRows = rows.map(r => [today, r.raw_uid, r.batch_code, r.vendor_name, r.qty, "кг", r.source]);
+  const newRows = rows.map(r => [today, r.raw_uid, r.batch_code, r.vendor_name, r.qty, "кг", r.source, r.expiry_date || "", r.manufacture_date || ""]);
   const allRows = [...keepRows, ...newRows];
   // Безопасная замена: сначала запись, затем подчистка хвоста (см. writeLipStock),
   // чтобы сбой между шагами не уничтожил партии Липковской.
   if (allRows.length) {
-    await writeRange("LipBatches", `A2:G${allRows.length + 1}`, allRows);
+    await writeRange("LipBatches", `A2:I${allRows.length + 1}`, allRows);
     if (existing.length > allRows.length) {
-      await clearRange("LipBatches", `A${allRows.length + 2}:G${existing.length + 1}`);
+      await clearRange("LipBatches", `A${allRows.length + 2}:I${existing.length + 1}`);
     }
   } else {
-    await clearRange("LipBatches", "A2:G5000");
+    await clearRange("LipBatches", "A2:I5000");
   }
   invalidateCache();
 }
@@ -1163,10 +1163,11 @@ export async function writeLipBatchesBulk(
 export async function getLipBatchesList(): Promise<any[]> {
   try {
     await ensureSheets(["LipBatches"]);
-    const rows = await readRange("LipBatches", "A2:G5000");
+    const rows = await readRange("LipBatches", "A2:I5000");
     return rows.filter(r => r[0]).map(r => ({
       snapshot_date: r[0], raw_uid: r[1], batch_code: r[2],
       vendor_name: r[3], qty: parseNum(r[4]), unit: r[5], source: r[6],
+      expiry_date: r[7] || null, manufacture_date: r[8] || null,
     }));
   } catch { return []; }
 }

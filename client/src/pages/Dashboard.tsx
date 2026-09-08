@@ -201,7 +201,7 @@ function MonitorTable({ rows, loading, loadError }: { rows: Decision[]; loading:
   );
 }
 
-export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => void }) {
+export default function Dashboard({ onOpenPlanning, onOpenExpiry }: { onOpenPlanning?: () => void; onOpenExpiry?: () => void }) {
   const [decisions, setDecisions]       = useState<Decision[]>([]);
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [catalog, setCatalog]           = useState<RawMaterial[]>([]);
@@ -1037,6 +1037,14 @@ export default function Dashboard({ onOpenPlanning }: { onOpenPlanning?: () => v
                 className="ml-2 text-xs border border-emerald-700 text-emerald-300 px-3 py-1.5 rounded hover:bg-emerald-900/30 transition"
               >
                 📋 Планирование закупок
+              </button>
+            )}
+            {onOpenExpiry && (
+              <button
+                onClick={onOpenExpiry}
+                className="ml-2 text-xs border border-orange-700 text-orange-300 px-3 py-1.5 rounded hover:bg-orange-900/30 transition"
+              >
+                ⏰ Сроки годности
               </button>
             )}
             {showCatalogMgr && (

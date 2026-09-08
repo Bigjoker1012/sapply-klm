@@ -5,8 +5,9 @@ import Synonyms from './pages/Synonyms';
 import Analogs from './pages/Analogs';
 import Planning from './pages/Planning';
 import RecipesStock from './pages/RecipesStock';
+import Expiry from './pages/Expiry';
 
-type Tab = 'home' | 'planning' | 'stock' | 'excluded' | 'synonyms' | 'analogs';
+type Tab = 'home' | 'planning' | 'stock' | 'excluded' | 'synonyms' | 'analogs' | 'expiry';
 
 function App() {
   const [tab, setTab] = useState<Tab>('home');
@@ -42,14 +43,18 @@ function App() {
         <button className={tabCls(tab === 'excluded')} onClick={() => setTab('excluded')}>
           Исключённые
         </button>
+        <button className={tabCls(tab === 'expiry')} onClick={() => setTab('expiry')}>
+          Сроки
+        </button>
       </nav>
 
-      {tab === 'home' && <Dashboard onOpenPlanning={() => setTab('planning')} />}
+      {tab === 'home' && <Dashboard onOpenPlanning={() => setTab('planning')} onOpenExpiry={() => setTab('expiry')} />}
       {tab === 'stock' && <RecipesStock onBack={goHome} />}
       {tab === 'planning' && <Planning onBack={goHome} />}
       {tab === 'synonyms' && <Synonyms onBack={goHome} />}
       {tab === 'analogs' && <Analogs onBack={goHome} />}
       {tab === 'excluded' && <Excluded onBack={goHome} />}
+      {tab === 'expiry' && <Expiry onBack={goHome} />}
     </div>
   );
 }
