@@ -18,7 +18,7 @@ interface ExpiryItem {
   color: string;
 }
 
-const STATUS_CONFIG = {
+const STATUS_CONFIG: Record<string, { label: string; bg: string; border: string; text: string; icon: string }> = {
   expired: { label: 'ПРОСРОЧЕНО', bg: 'bg-red-900/50', border: 'border-red-600', text: 'text-red-400', icon: '❌' },
   urgent: { label: 'СРОЧНО', bg: 'bg-red-900/30', border: 'border-red-500', text: 'text-red-400', icon: '🔴' },
   warning: { label: 'ВНИМАНИЕ', bg: 'bg-yellow-900/30', border: 'border-yellow-500', text: 'text-yellow-400', icon: '🟡' },
@@ -28,23 +28,18 @@ const STATUS_CONFIG = {
 
 const fmtDate = (d: string | null) => {
   if (!d) return '—';
-  try {
-    return new Date(d).toLocaleDateString('ru-RU');
-  } catch {
-    return d;
-  }
+  try { return new Date(d).toLocaleDateString('ru-RU'); } catch { return d; }
 };
 
 const fmtDays = (days: number) => {
-  if (days < 0) return `просрочено ${Math.abs(days)} дн.`;
+  if (days < 0) return 'просрочено ' + Math.abs(days) + ' дн.';
   if (days === 0) return 'сегодня';
   if (days === 1) return 'завтра';
-  if (days < 5) return `${days} дн.`;
-  if (days < 30) return `${days} дн.`;
   const months = Math.floor(days / 30);
   const remainingDays = days % 30;
-  if (remainingDays === 0) return `${months} мес.`;
-  return `${months} мес. ${remainingDays} дн.`;
+  if (remainingDays === 0 && months > 0) return months + ' мес.';
+  if (months > 0) return months + ' мес. ' + remainingDays + ' дн.';
+  return days + ' дн.';
 };
 
 export default function Expiry({ onBack }: { onBack: () => void }) {
@@ -53,12 +48,15 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<string>('all');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await axios.get<ExpiryItem[]>(`${API}/expiry`);
+      const res = await axios.get<ExpiryItem[]>(API + '/expiry');
       setItems(res.data ?? []);
     } catch (e: any) {
       setError(e.response?.data?.error || 'Не удалось загрузить данные по срокам');
@@ -69,20 +67,55 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const startEdit = (item: ExpiryItem) => {
+    const key = item.raw_uid + '__' + item.batch_code;
+    setEditing(key);
+    setEditValue(item.expiry_date || '');
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setEditValue('');
+  };
+
+  const saveEdit = async (raw_uid: string) => {
+    setSaving(true);
+    try {
+      await axios.put(API + '/expiry/' + raw_uid, {
+        expiry_date: editValue || null,
+      });
+      setItems(prev => prev.map(item => {
+        if (item.raw_uid === raw_uid) {
+          const newExpiry = editValue || null;
+          const today = new Date(); today.setHours(0,0,0,0);
+          let daysRemaining = -1, status = 'unknown', color = 'gray';
+          if (newExpiry) {
+            const exp = new Date(newExpiry); exp.setHours(0,0,0,0);
+            daysRemaining = Math.ceil((exp.getTime() - today.getTime()) / (1000*60*60*24));
+            if (daysRemaining < 0) { status = 'expired'; color = 'red'; }
+            else if (daysRemaining <= 30) { status = 'urgent'; color = 'red'; }
+            else if (daysRemaining <= 90) { status = 'warning'; color = 'yellow'; }
+            else { status = 'ok'; color = 'green'; }
+          }
+          return { ...item, expiry_date: newExpiry, days_remaining: daysRemaining, status, color };
+        }
+        return item;
+      }));
+      cancelEdit();
+    } catch (e: any) {
+      alert('Ошибка: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const q = search.trim().toLowerCase();
   const filtered = items.filter(item => {
-    // Search filter
-    if (q && !item.name.toLowerCase().includes(q) && !item.raw_uid.toLowerCase().includes(q) && !item.batch_code.toLowerCase().includes(q)) {
-      return false;
-    }
-    // Status filter
-    if (filter !== 'all' && item.status !== filter) {
-      return false;
-    }
+    if (q && !item.name.toLowerCase().includes(q) && !item.raw_uid.toLowerCase().includes(q) && !item.batch_code.toLowerCase().includes(q)) return false;
+    if (filter !== 'all' && item.status !== filter) return false;
     return true;
   });
 
-  // Summary counts
   const counts = {
     expired: items.filter(i => i.status === 'expired').length,
     urgent: items.filter(i => i.status === 'urgent').length,
@@ -92,15 +125,7 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <ListPageShell
-      title="Сроки годности"
-      badge={`${items.length} поз.`}
-      onBack={onBack}
-      loading={loading}
-      error={error}
-      onRefresh={load}
-    >
-      {/* Traffic Light Summary */}
+    <ListPageShell title="Сроки годности" badge={items.length + ' поз.'} onBack={onBack} loading={loading} error={error} onRefresh={load}>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
         {[
           { key: 'expired', label: 'Просрочено', count: counts.expired, color: 'border-red-600 bg-red-950/40' },
@@ -109,27 +134,17 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
           { key: 'ok', label: 'Норма (>90 дн.)', count: counts.ok, color: 'border-green-600 bg-green-950/30' },
           { key: 'unknown', label: 'Нет данных', count: counts.unknown, color: 'border-gray-600 bg-gray-900/30' },
         ].map(s => (
-          <button
-            key={s.key}
-            onClick={() => setFilter(filter === s.key ? 'all' : s.key)}
-            className={`border rounded-lg p-3 text-left transition hover:opacity-90 ${s.color} ${filter === s.key ? 'ring-2 ring-white' : ''}`}
-          >
+          <button key={s.key} onClick={() => setFilter(filter === s.key ? 'all' : s.key)}
+            className={'border rounded-lg p-3 text-left transition hover:opacity-90 ' + s.color + (filter === s.key ? ' ring-2 ring-white' : '')}>
             <div className="text-2xl font-bold text-white">{s.count}</div>
             <div className="text-xs text-gray-300">{s.label}</div>
           </button>
         ))}
       </div>
 
-      {/* Search */}
-      <input
-        type="text"
-        placeholder="Поиск по названию, коду или партии..."
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        className="w-full max-w-md bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 mb-4"
-      />
+      <input type="text" placeholder="Поиск по названию, коду или партии..." value={search} onChange={e => setSearch(e.target.value)}
+        className="w-full max-w-md bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 mb-4" />
 
-      {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-gray-800">
         <table className="w-full text-sm">
           <thead>
@@ -145,11 +160,13 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
           </thead>
           <tbody>
             {filtered.map((item, idx) => {
-              const config = STATUS_CONFIG[item.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.unknown;
+              const config = STATUS_CONFIG[item.status] || STATUS_CONFIG.unknown;
+              const editKey = item.raw_uid + '__' + item.batch_code;
+              const isEditing = editing === editKey;
               return (
-                <tr key={`${item.raw_uid}-${item.batch_code}-${idx}`} className={`border-t border-gray-800 ${config.bg}`}>
+                <tr key={editKey} className={'border-t border-gray-800 ' + config.bg}>
                   <td className="px-3 py-2">
-                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${config.text} ${config.border} border`}>
+                    <span className={'inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ' + config.text + ' ' + config.border + ' border'}>
                       {config.icon} {config.label}
                     </span>
                   </td>
@@ -162,8 +179,27 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
                     {item.qty.toLocaleString('ru-RU')} <span className="text-xs text-gray-500">{item.unit}</span>
                   </td>
                   <td className="px-3 py-2 text-gray-300">{fmtDate(item.manufacture_date)}</td>
-                  <td className="px-3 py-2 text-gray-300">{fmtDate(item.expiry_date)}</td>
-                  <td className={`px-3 py-2 text-right font-medium ${config.text}`}>
+                  <td className="px-3 py-2">
+                    {isEditing ? (
+                      <div className="flex items-center gap-2">
+                        <input type="date" value={editValue} onChange={e => setEditValue(e.target.value)}
+                          className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-white" />
+                        <button onClick={() => saveEdit(item.raw_uid)} disabled={saving}
+                          className="px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs text-white disabled:opacity-50">
+                          {saving ? '...' : '✓'}
+                        </button>
+                        <button onClick={cancelEdit} className="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs text-white">✕</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => startEdit(item)}
+                        className="text-gray-300 hover:text-white hover:bg-gray-700/50 px-2 py-1 rounded cursor-pointer"
+                        title="Нажмите чтобы изменить срок годности">
+                        {fmtDate(item.expiry_date)}
+                        {!item.expiry_date && <span className="text-gray-600 ml-1 text-xs">✏️</span>}
+                      </button>
+                    )}
+                  </td>
+                  <td className={'px-3 py-2 text-right font-medium ' + config.text}>
                     {item.expiry_date ? fmtDays(item.days_remaining) : '—'}
                   </td>
                 </tr>
@@ -181,8 +217,8 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
       </div>
 
       <div className="text-xs text-gray-500 mt-2">
-        Показано: {filtered.length} из {items.length} | 
-        Фильтр: {filter === 'all' ? 'все' : STATUS_CONFIG[filter as keyof typeof STATUS_CONFIG]?.label || filter}
+        Показано: {filtered.length} из {items.length} |
+        Фильтр: {filter === 'all' ? 'все' : STATUS_CONFIG[filter]?.label || filter}
       </div>
     </ListPageShell>
   );

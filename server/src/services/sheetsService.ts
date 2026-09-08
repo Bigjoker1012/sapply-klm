@@ -1172,7 +1172,34 @@ export async function getLipBatchesList(): Promise<any[]> {
   } catch { return []; }
 }
 
-/** Returns sum of latest КД snapshot per raw_uid (for use in computeDecisions). */
+/** Update expiry_date (and optionally manufacture_date) for all batches of a raw_uid in LipBatches sheet. */
+export async function updateLipBatchExpiry(raw_uid: string, expiry_date: string | null, manufacture_date: string | null): Promise<number> {
+  await ensureSheets(["LipBatches"]);
+  const rows = await readRange("LipBatches", "A2:I5000");
+  let updated = 0;
+  let latestIdx = -1;
+  let latestDate = "";
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r[1] === raw_uid) {
+      const snapDate = String(r[0] || "");
+      if (snapDate >= latestDate) {
+        latestDate = snapDate;
+        latestIdx = i;
+      }
+    }
+  }
+  if (latestIdx >= 0) {
+    rows[latestIdx][7] = expiry_date || "";
+    rows[latestIdx][8] = manufacture_date || "";
+    updated = 1;
+    if (rows.length) {
+      await writeRange("LipBatches", `A2:I${rows.length + 1}`, rows);
+    }
+  }
+  invalidateCache();
+  return updated;
+}/** Returns sum of latest КД snapshot per raw_uid (for use in computeDecisions). */
 export async function getLatestLipBatchStock(): Promise<Map<string, number>> {
   try {
     const rows = await readRange("LipBatches", "A2:G5000");
