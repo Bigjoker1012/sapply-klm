@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { requireAuth } from "../auth/middleware";
 import multer from "multer";
 import {
   matchBatch, addToReviewQueueBatch,
@@ -13,6 +14,7 @@ import { parsePolotskExcel, parseRecipeExcel, parseKdExcel, recipeCodeFromFilena
 import { saveDocument } from "../services/documentArchive";
 
 const router = Router();
+router.use(requireAuth);
 // Лимит с запасом: при обходе WAF файл приходит в base64 (≈ +33% к размеру),
 // поэтому держим 45MB, чтобы фактический предел исходного файла оставался ~30MB.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 45 * 1024 * 1024 } });

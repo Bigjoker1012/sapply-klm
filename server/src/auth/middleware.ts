@@ -59,11 +59,10 @@ export async function loadUser(req: Request): Promise<AuthedUser | null> {
 }
 
 /**
- * ВРЕМЕННО: авторизация полностью отключена по просьбе пользователя.
- * Пока флаг = true, любой запрос проходит как встроенный admin-пользователь,
- * без проверки токена. Чтобы вернуть нормальный вход — поставить false.
+ * AUTH_DISABLED: когда process.env.AUTH_DISABLED === "true" — авторизация
+ * отключена (dev/test режим). По умолчанию авторизация ВКЛЮЧЕНА.
  */
-const AUTH_DISABLED = true;
+const AUTH_DISABLED = process.env.AUTH_DISABLED === "true";
 
 const DEV_USER: AuthedUser = {
   id: 0,

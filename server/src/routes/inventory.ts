@@ -1,10 +1,12 @@
 import { Router, Request, Response } from "express";
+import { requireAuth } from "../auth/middleware";
 import {
   getLatestPlantStock, getLipStockList, writeLipStock, getAllRawMaterials,
   getLipBatchesList, getAnalogs, addAnalog, deleteAnalog,
 } from "../services/sheetsService";
 
 const router = Router();
+router.use(requireAuth);
 
 router.get("/polotsk", async (_req: Request, res: Response) => {
   try {

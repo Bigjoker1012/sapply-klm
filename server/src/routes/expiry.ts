@@ -1,7 +1,9 @@
 import { Router, Request, Response } from "express";
+import { requireAuth } from "../auth/middleware";
 import { getLipBatchesList, getAllRawMaterials, updateLipBatchExpiry } from "../services/sheetsService";
 
 const router = Router();
+router.use(requireAuth);
 
 function getExpiryStatus(expiryDate: string): { status: string; daysRemaining: number; color: string } {
   if (!expiryDate) return { status: "unknown", daysRemaining: -1, color: "gray" };
@@ -17,7 +19,10 @@ function getExpiryStatus(expiryDate: string): { status: string; daysRemaining: n
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const [batches, materials] = await Promise.all([getLipBatchesList(), getAllRawMaterials()]);
+    const [batches, materials] = await Promise.all([
+      getLipBatchesList(),
+      getAllRawMaterials(),
+    ]);
     const nameMap = new Map(materials.map((m: any) => [m.raw_uid, m.full_name]));
     const latestByUid = new Map<string, any>();
     for (const batch of batches) {

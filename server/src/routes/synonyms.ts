@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { requireAuth } from "../auth/middleware";
 import {
   readRange, getAllRawMaterials, parseAliasRows,
   getUnresolvedQueue, resolveQueueItem, addAlias,
@@ -7,6 +8,7 @@ import {
 import { suggestMatches } from "../services/aiMatcher";
 
 const router = Router();
+router.use(requireAuth);
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
