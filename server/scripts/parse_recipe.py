@@ -1,302 +1,383 @@
 #!/usr/bin/env python3
-"""PDF recipe parser — tesseract OCR + pymupdf. Outputs JSON to stdout."""
-import sys, os, json, re, subprocess, tempfile
-from collections import defaultdict
+"""
+OCR-based recipe PDF parser for KLM supply chain system.
+Usage: python3 ocr_recipe.py <pdf_path>
+Outputs JSON to stdout.
+"""
+
+import sys
+import json
+import re
+import subprocess
+import tempfile
+import os
 
 try:
-    import fitz  # PyMuPDF
+    import fitz
 except ImportError:
-    print(json.dumps({"error": "pymupdf not installed"}))
+    print(json.dumps({"error": "PyMuPDF not installed"}))
     sys.exit(1)
 
-def ocr_page(page):
-    """Convert page to image, run tesseract, return list of (text, x, y, w, h)."""
-    pix = page.get_pixmap(dpi=300)
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        pix.save(f.name)
-        img_path = f.name
+
+# ─── Number utilities ──────────────────────────────────────────────────────────
+
+def parse_num(tok: str):
+    """
+    Parse a token as a positive float.
+    Handles Russian comma-decimal and OCR artifacts like '60,.126' → 60.126.
+    """
+    t = tok.replace(' ', '').replace(',', '.')
+    # Collapse multiple consecutive dots (e.g. '60..126' → '60.126')
+    t = re.sub(r'\.{2,}', '.', t)
+    # Strip trailing/leading dots
+    t = t.strip('.')
+    if not t:
+        return None
     try:
-        # Run tesseract with tsv output for coordinates
-        result = subprocess.run(
-            ["tesseract", img_path, "stdout", "--psm", "6", "-l", "rus+eng", "tsv"],
-            capture_output=True, text=True, timeout=60
-        )
-        blocks = []
-        for line in result.stdout.strip().split("\n"):
-            parts = line.split("\t")
-            if len(parts) >= 12 and parts[0] != "level":
-                try:
-                    level = int(parts[0])
-                    text = parts[11].strip()
-                    if level == 5 and text:  # word level
-                        x = int(parts[6])
-                        y = int(parts[7])
-                        w = int(parts[8])
-                        h = int(parts[9])
-                        conf = float(parts[10])
-                        blocks.append({"text": text, "x": x, "y": y, "w": w, "h": h, "conf": conf})
-                except (ValueError, IndexError):
-                    pass
-        return blocks
-    finally:
-        os.unlink(img_path)
+        v = float(t)
+        return v if v > 0 else None
+    except Exception:
+        return None
 
-def group_rows(blocks, tol=8):
-    """Group blocks into rows by Y coordinate."""
-    blocks.sort(key=lambda b: (b["y"], b["x"]))
-    rows = []
-    for b in blocks:
-        merged = False
-        for row in rows:
-            if abs(b["y"] - row["y"]) <= tol:
-                row["blocks"].append(b)
-                row["y"] = min(row["y"], b["y"])
-                merged = True
-                break
-        if not merged:
-            rows.append({"y": b["y"], "blocks": [b]})
-    for row in rows:
-        row["blocks"].sort(key=lambda b: b["x"])
-        row["text"] = " ".join(b["text"] for b in row["blocks"])
-    return sorted(rows, key=lambda r: r["y"])
 
-INGR_KW = [
-    "ВИТАМИН", "КОБАЛЬТ", "ЙОДАТ", "БИОПЛЕКС", "СЕЛ-ПЛЕКС", "СЕЛЕНИТ",
-    "ОКСИД", "СУЛЬФАТ", "КАРБОНАТ", "ХЛОРИД", "ХЕЛАТ",
-    "ОКСИКАП", "СОЛЬ", "ИЗВЕСТНЯК", "БИКАРБОНАТ", "МОНОКАЛЬ",
-    "ОТРУБИ", "МИАЛАКТО", "СОДА", "ПИЩЕВАЯ", "ВЫВАРОЧН",
-    "ПШЕНИЧН", "РЖАН", "МУКА", "ФОСФАТ", "НАТРИЙ", "МАГНИЙ СЕРНОКИСЛ"
-]
+def extract_numbers_from_str(text: str):
+    """
+    Extract positive numbers from OCR text.
+    Handles comma-decimal; does NOT allow spaces inside a number token.
+    """
+    # Replace artifacts (including spaces) with space — keeps commas/periods
+    clean = re.sub(r'[|\[\]—©*^~`_\s]', ' ', text)
+    # Match numeric tokens: must start and end with a digit, may contain , or .
+    tokens = re.findall(r'\d[\d,.]*\d|\d', clean)
+    result = []
+    for tok in tokens:
+        v = parse_num(tok)
+        if v is not None:
+            result.append(v)
+    return result
 
-SKIP_RE = re.compile(
-    r"ИТОГО|СТОИМ|ПРОИЗВ|СЕБЕСТОИМ|ПРИБЫЛЬ|ЦЕНА|НДС|"
-    r"СЫРОЙ ПРОТЕИН|СЫРОЙ ЖИР|СЫРАЯ КЛЕТЧАТК|"
-    r"ВИТАМИНЫ ИТОГО|МИКРОЭЛЕМЕНТЫ ИТОГО|"
-    r"СТОИМ СЫРЬЯ|ПР\. ИЗД|КХП"
+
+# ─── Code-prefix & name cleanup ────────────────────────────────────────────────
+
+# Code prefix with letter start: Д204_, М26_, Ан20_, Д223_, Д!08
+LETTER_CODE_RE = re.compile(
+    r'^[А-ЯA-Za-zА-Яа-яЁё][А-ЯA-Za-zА-Яа-яЁё0-9]{0,4}[_!-]\s*\d*\s*',
+    re.UNICODE,
 )
 
-def is_skip(text):
-    return bool(SKIP_RE.search(text.upper()))
+# Code prefix with digit start: 4108_, 4н16-
+DIGIT_CODE_RE = re.compile(
+    r'^\d[\dА-Яа-яA-Za-z]*[_!-]\s*\d*\s*',
+    re.UNICODE,
+)
 
-def has_kw(text):
-    t = text.upper()
-    return any(kw in t for kw in INGR_KW)
 
-CODE_RE = re.compile(r"^([A-Za-zА-Яа-яЁё]{1,3})(\d{1,3})([а-яё]{0,2})")
+def strip_code_prefix(text: str) -> str:
+    m = LETTER_CODE_RE.match(text)
+    if m:
+        return text[m.end():]
+    m = DIGIT_CODE_RE.match(text)
+    if m:
+        return text[m.end():]
+    return text
 
-def extract_code(text):
-    clean = re.sub(r"^[\[\]|]+", "", text).strip()
-    if not clean:
-        return None
-    # OCR fix: 8→В at start
-    if clean[0].isdigit() and len(clean) >= 3:
-        m = re.match(r"^(\d{1,3})([_\s]|$)", clean)
-        if m:
-            after = clean[m.end():]
-            if after and not after[0].isdigit():
-                if clean[0] == "8":
-                    clean = "В" + clean[1:]
-                else:
-                    clean = "Д" + clean
-    m = CODE_RE.match(clean)
-    if not m:
-        m2 = re.match(r"^([A-Za-zА-Яа-яЁё]{1,2})(\d{0,0})", clean)
-        if m2 and len(m2.group(1)) >= 2:
-            return m2.group(1)
-        return None
-    code = m.group(1) + m.group(2) + m.group(3)
-    skip = {"тыс", "Тыс", "мг", "МГ", "кг", "КГ", "МЕ", "ПРО", "RPO", "МДЖ", "ВИ", "КА"}
-    if code in skip or m.group(1) in skip:
-        return None
-    return code
 
-def extract_name(raw, code):
-    cm = re.search(re.escape(code) + r"[_\s]?", raw)
-    if not cm:
-        return ""
-    after = raw[cm.end():].lstrip("_ |[")
-    dm = re.search(r"\s(\d{1,3},\d{3,4})\b", after)
-    if dm:
-        name = after[:dm.start()].strip()
-    else:
-        fm = re.search(r"\s(\d+[.,]?\d*/\d+[.,]?\d*)", after)
-        if fm:
-            name = after[:fm.start()].strip()
+# Name junk patterns
+NAME_KLM_RE     = re.compile(r'\s+(КЛМ|КЛ|лм|клм)\b.*$', re.IGNORECASE | re.UNICODE)
+BRAND_RE        = re.compile(r'\s+ЭКСТРАСИЛ\w*', re.IGNORECASE | re.UNICODE)
+TRAILING_RE     = re.compile(r'[\s\-—|_.]+$')
+LEADING_RE      = re.compile(r'^[\s\-—|_.]+')
+
+
+def clean_name(raw: str) -> str:
+    name = NAME_KLM_RE.sub('', raw)
+    name = BRAND_RE.sub('', name)
+    name = TRAILING_RE.sub('', name)
+    name = LEADING_RE.sub('', name)
+    return name.strip().upper()
+
+
+# ─── Row tokeniser ─────────────────────────────────────────────────────────────
+
+PURE_NUM_RE = re.compile(r'^\d[\d,.]*$')
+
+
+def split_row(inner: str):
+    """
+    Split an OCR table row (leading '[' already stripped) into
+    (material_name, list_of_numbers).
+
+    Strategy:
+    - Strip code prefix.
+    - Replace OCR artifacts with spaces.
+    - Split into tokens.
+    - The first "purely numeric" token marks the start of the data columns.
+    - The name is everything before that token.
+    - Numbers are extracted from everything from that token onward,
+      BUT we stop collecting numbers as soon as we hit 2+ consecutive
+      non-numeric, non-junk tokens (to avoid including nutritional data
+      from adjacent columns).
+    """
+    no_code = strip_code_prefix(inner)
+
+    # Replace artifacts with spaces; keep comma (decimal sep) untouched
+    clean = re.sub(r'[|\[\]—©*^~`_]', ' ', no_code)
+    tokens = clean.split()
+
+    name_toks  = []
+    rest_toks  = []
+    found_split = False
+
+    for tok in tokens:
+        if not found_split and PURE_NUM_RE.match(tok):
+            found_split = True
+        if found_split:
+            rest_toks.append(tok)
         else:
-            nm = re.search(r"\s+\d", after)
-            name = after[:nm.start()].strip() if nm else after.strip()
-    name = re.sub(r"[_\[\]|:]+$", "", name).strip()
-    name = re.sub(r"\s+", " ", name)
-    return name
+            name_toks.append(tok)
 
-def extract_numbers(blocks, skip_block=None):
-    nums = []
-    for b in blocks:
-        if skip_block and b["text"] == skip_block["text"]:
-            continue
-        for n in re.findall(r"\d+[.,]?\d*(?:/\d+[.,]?\d*)?", b["text"]):
-            nc = n.replace(",", ".")
-            if "/" in nc:
-                for p in nc.split("/"):
-                    try: nums.append(float(p))
-                    except: pass
-            else:
-                try: nums.append(float(nc))
-                except: pass
-    return nums
+    if not found_split:
+        return clean_name(' '.join(name_toks)), []
 
-def find_pct_and_kg(numbers, batch_kg):
-    """Find (percentage, kg) from numbers list, validating kg ≈ pct * batch_kg / 100."""
-    for i, pct in enumerate(numbers):
-        if not (0.001 <= pct <= 100.0):
+    name = clean_name(' '.join(name_toks))
+
+    # Build rest string but stop early when we hit letter tokens
+    # (those are from adjacent nutritional-value columns that pollute our numbers)
+    useful_rest = []
+    letter_run  = 0
+    for tok in rest_toks:
+        if PURE_NUM_RE.match(tok) or re.match(r'^\d', tok):
+            useful_rest.append(tok)
+            letter_run = 0
+        else:
+            letter_run += 1
+            if letter_run >= 2:
+                break  # Two consecutive non-numeric tokens → stop
+
+    rest_str = ' '.join(useful_rest)
+    numbers  = extract_numbers_from_str(rest_str)
+
+    # Hard-cap: only keep the first 6 numbers (activity, %, г/т, kg, price, cost)
+    numbers = numbers[:6]
+
+    return name, numbers
+
+
+# ─── % ввода / расход кг detection ────────────────────────────────────────────
+
+def find_pct_and_kg(numbers, batch_kg: float):
+    """
+    Return (pct_vvoda, raskhod_kg) from a list of at most 6 numbers.
+
+    Validation: расход_kg ≈ pct × batch_kg / 100  (within 15 %).
+
+    Handles:
+    - Activity column before % ввода (e.g. MgO 65% activity then 40% ввода).
+    - OCR comma-drop: "4032" is really 4.032 kg → try divisors [1, 1000, 0.001].
+    - Limit search to next 4 numbers after candidate % (not the whole list),
+      to avoid false positives from nutritional data appended by OCR.
+    """
+    for i, pct_cand in enumerate(numbers):
+        if not (0.001 <= pct_cand <= 100.0):
             continue
-        expected = pct * batch_kg / 100.0
-        for kg_cand in numbers[i+1:i+5]:
+
+        expected  = pct_cand * batch_kg / 100.0
+        # Only look at the NEXT 4 numbers for the kg value
+        remaining = numbers[i + 1: i + 5]
+
+        best_adj = None
+        best_err = 1e9
+
+        for kg_cand in remaining:
             if kg_cand <= 0:
                 continue
-            for div in (1.0, 1000.0, 0.001):
-                adj = kg_cand / div
-                if expected > 0 and abs(adj - expected) / expected < 0.15:
-                    return pct, round(adj, 3)
-    # Fallback: first valid %, derive kg
-    for pct in numbers:
-        if 0.001 <= pct <= 100.0:
-            return pct, round(pct * batch_kg / 100.0, 3)
+            for divisor in (1.0, 1000.0, 0.001):
+                adj = kg_cand / divisor
+                if expected > 0:
+                    err = abs(adj - expected) / expected
+                    if err < 0.15 and err < best_err:
+                        best_err = err
+                        best_adj = adj
+
+        if best_adj is not None:
+            return pct_cand, round(best_adj, 3)
+
+    # Fallback 1: use first valid % and derive kg from it
+    for pct_cand in numbers:
+        if 0.001 <= pct_cand <= 100.0:
+            return pct_cand, round(pct_cand * batch_kg / 100.0, 3)
+
+    # Fallback 2: OCR may merge columns (e.g. "40,0000|400 000" → "4000001400000").
+    # Try dividing each large number by powers of 10 to recover a valid %;
+    # ONLY accept if we also find a corroborating kg value in the remaining numbers.
+    for i, raw_n in enumerate(numbers):
+        for factor in (10.0, 100.0, 1000.0):
+            pct_cand = raw_n / factor
+            if not (0.001 <= pct_cand <= 100.0):
+                continue
+            expected  = pct_cand * batch_kg / 100.0
+            remaining = numbers[i + 1: i + 5]
+            for kg_cand in remaining:
+                for divisor in (1.0, 1000.0, 0.001):
+                    adj = kg_cand / divisor
+                    if expected > 0 and abs(adj - expected) / expected < 0.15:
+                        return round(pct_cand, 4), round(adj, 3)
+
     return None, None
 
-def parse_header(rows):
-    """Extract recipe code, name, date, batch_kg from header rows."""
-    code, name, date, batch_kg = "", "", "", 1000.0
-    for row in rows[:40]:
-        t = row["text"]
-        if not code:
-            m = re.search(r"[А-ЯA-ZА-Яа-яa-z0-9Ёё\-./]+ПЛЦ[-\s]?\d", t, re.IGNORECASE)
-            if m and len(t) < 60:
-                code = t.strip()
-        if not date:
-            m = re.search(r"(\d{2}[.\-/]\d{2}[.\-/]\d{4})", t)
+
+# ─── Skip logic ────────────────────────────────────────────────────────────────
+
+SKIP_KW = (
+    'ИТОГО', 'ВСЕГО', 'МИКРОЭЛЕМ', 'МИНЕРАЛ', 'КОРМОВЫЕ', 'ПЛАНОВАЯ',
+    'КАЛЬКУЛ', 'ЦЕНА', 'СТОИМ', 'НАШЕН', 'НАИМЕН', 'ВВОДА',
+    'ВИТАМИН', 'СОСТАВ', 'СОГЛАСОВ', 'УТВЕРЖ',
+    'НАЧАЛЬНИК', 'ГЛ.', 'ИНЖЕНЕР', 'БУХГАЛТЕР', 'ДИРЕКТОР', 'ИСПОЛН',
+)
+
+
+def should_skip(text: str) -> bool:
+    u = text.upper()
+    return any(kw in u for kw in SKIP_KW)
+
+
+# ─── Header ────────────────────────────────────────────────────────────────────
+
+def parse_header(lines):
+    recipe_code = ''
+    recipe_name = ''
+    recipe_date = ''
+    batch_kg    = 1000.0
+
+    for line in lines[:35]:
+        line = line.strip()
+
+        if 'РЕЦЕПТ' in line.upper() and not recipe_code:
+            m = re.search(r'Д-[А-ЯA-ZА-Яа-яa-z0-9Ёё\-./]+', line)
             if m:
-                date = m.group(1)
-        if not batch_kg or batch_kg == 1000.0:
-            m = re.search(r"Выработка[:\s]*([\d,.\s]+)\s*т", t, re.IGNORECASE)
-            if m:
-                try:
-                    batch_kg = float(m.group(1).replace(",", ".").replace(" ", "")) * 1000
-                except:
-                    pass
-        if not name:
-            m = re.search(r"Для\s+(.+)$", t, re.IGNORECASE)
-            if m:
-                name = m.group(1).strip()
-    return code, name, date, batch_kg
+                recipe_code = m.group().rstrip('.')
 
-def parse_pdf(fpath):
-    doc = fitz.open(fpath)
-    all_rows = []
-    all_ingredients = []
+        m = re.search(r'(\d{2}[.\-/]\d{2}[.\-/]\d{4})', line)
+        if m and not recipe_date:
+            recipe_date = m.group(1)
 
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        blocks = ocr_page(page)
-        rows = group_rows(blocks)
+        m = re.search(r'Выработка[:\s]*([\d,.\s]+)\s*т', line, re.IGNORECASE)
+        if m:
+            try:
+                batch_kg = float(m.group(1).replace(',', '.').replace(' ', '')) * 1000
+            except Exception:
+                pass
 
-        # Header on first page
-        if page_num == 0:
-            h_code, h_name, h_date, h_batch = parse_header(rows)
-            all_rows.extend(rows)
+        if 'ДЛЯ' in line.upper() and len(line) > 10 and not recipe_name:
+            cleaned = re.sub(r'^Для\s*\|?\s*', '', line, flags=re.IGNORECASE).strip()
+            recipe_name = cleaned
 
-        # Find header
-        header_y = None
-        for row in rows:
-            if "Норма" in row["text"] and "%" in row["text"]:
-                header_y = row["y"]
-                break
+    return recipe_code, recipe_name, recipe_date, batch_kg
 
-        used_codes = set()
-        used_idxs = set()
 
-        for ri, row in enumerate(rows):
-            if header_y and row["y"] <= header_y + 80:
-                continue
-            if ri in used_idxs:
-                continue
-            if is_skip(row["text"]):
-                continue
+# ─── Main parse ────────────────────────────────────────────────────────────────
 
-            code = None
-            code_block = None
-            code_idx = -1
-            for bi, b in enumerate(row["blocks"][:3]):
-                c = extract_code(b["text"])
-                if c:
-                    code, code_block, code_idx = c, b, bi
-                    break
-            if not code:
-                continue
-            if not has_kw(row["text"]) and not re.search(r"\d+[.,]\d+/\d+[.,]\d+", row["text"]):
-                continue
-            if code in used_codes:
-                continue
-            used_codes.add(code)
+def parse_recipe_text(text: str):
+    lines = text.split('\n')
+    recipe_code, recipe_name, recipe_date, batch_kg_base = parse_header(lines)
 
-            name = extract_name(row["text"], code)
-            all_blocks = list(row["blocks"])
+    # Actual input batch is ~0.8 % larger than output (moisture losses)
+    batch_kg = batch_kg_base * 1.008
 
-            # Continuation rows
-            for ci in range(ri + 1, min(ri + 4, len(rows))):
-                nr = rows[ci]
-                if abs(nr["y"] - row["y"]) > 25:
-                    break
-                next_has_code = any(extract_code(nb["text"]) for nb in nr["blocks"][:2])
-                if next_has_code:
-                    break
-                if is_skip(nr["text"]):
-                    continue
-                all_blocks.extend(nr["blocks"])
-                used_idxs.add(ci)
+    rows  = []
+    seen  = set()
 
-            numbers = extract_numbers(all_blocks, code_block)
-            raw = " ".join(b["text"] for b in all_blocks)[:300]
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line.startswith('['):
+            continue
 
-            all_ingredients.append({
-                "code": code,
-                "name": name,
-                "numbers": numbers,
-                "raw_text": raw,
-            })
+        inner = line.lstrip('[').rstrip(']').strip()
 
-    doc.close()
+        name, numbers = split_row(inner)
 
-    # Convert to expected format: {code, name, date, batchKg, rows}
-    batch_kg = h_batch if 'h_batch' in dir() else 1000.0
-    recipe_rows = []
-    for ing in all_ingredients:
-        pct, kg = find_pct_and_kg(ing["numbers"], batch_kg)
-        if pct and kg:
-            recipe_rows.append({
-                "rawName": ing["name"] or ing["code"],
-                "percentage": round(pct, 4),
-                "quantityKg": round(kg, 3),
-            })
+        if not name or len(name) < 3:
+            continue
+        # Skip based on NAME only (not the full OCR line which may contain
+        # nutritional column text like ВИТАМИНВ5 that pollutes the line)
+        if should_skip(name):
+            continue
+        if name in seen:
+            continue
+        if not numbers:
+            continue
+
+        pct, kg = find_pct_and_kg(numbers, batch_kg)
+        if pct is None or pct <= 0 or kg is None or kg <= 0:
+            continue
+
+        seen.add(name)
+        rows.append({
+            'rawName'    : name,
+            'percentage' : round(pct, 4),
+            'quantityKg' : round(kg, 3),
+        })
 
     return {
-        "code": h_code if 'h_code' in dir() else "",
-        "name": h_name if 'h_name' in dir() else "",
-        "date": h_date if 'h_date' in dir() else "",
-        "batchKg": round(batch_kg, 1),
-        "rows": recipe_rows,
+        'code'   : recipe_code,
+        'name'   : recipe_name or recipe_code,
+        'date'   : recipe_date,
+        'batchKg': round(batch_kg, 1),
+        'rows'   : rows,
     }
 
-if __name__ == "__main__":
+
+# ─── OCR runner ────────────────────────────────────────────────────────────────
+
+def run_ocr(img_path: str) -> str:
+    result = subprocess.run(
+        ['tesseract', img_path, 'stdout', '-l', 'rus', '--psm', '6'],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f'Tesseract exited {result.returncode}: {result.stderr[:300]}'
+        )
+    return result.stdout
+
+
+# ─── Entry point ───────────────────────────────────────────────────────────────
+
+def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: parse_recipe.py <input.pdf> [output.json]"}))
+        print(json.dumps({'error': 'Usage: ocr_recipe.py <pdf_path>'}))
         sys.exit(1)
-    fpath = sys.argv[1]
-    result = parse_pdf(fpath)
-    output = json.dumps(result, ensure_ascii=False, indent=2)
-    if len(sys.argv) >= 3:
-        with open(sys.argv[2], "w", encoding="utf-8") as f:
-            f.write(output)
-        print(json.dumps({"ok": True, "file": sys.argv[2], "ingredients": len(result["ingredients"])}))
-    else:
-        print(output)
+
+    pdf_path = sys.argv[1]
+    if not os.path.exists(pdf_path):
+        print(json.dumps({'error': f'File not found: {pdf_path}'}))
+        sys.exit(1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        img_path = os.path.join(tmpdir, 'recipe.png')
+
+        try:
+            doc  = fitz.open(pdf_path)
+            page = doc[0]
+            mat  = fitz.Matrix(2.5, 2.5)
+            pix  = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY)
+            pix.save(img_path)
+            doc.close()
+        except Exception as exc:
+            print(json.dumps({'error': f'PDF render failed: {exc}'}))
+            sys.exit(1)
+
+        try:
+            ocr_text = run_ocr(img_path)
+        except Exception as exc:
+            print(json.dumps({'error': str(exc)}))
+            sys.exit(1)
+
+    recipe = parse_recipe_text(ocr_text)
+    print(json.dumps(recipe, ensure_ascii=False, indent=2))
+
+
+if __name__ == '__main__':
+    main()

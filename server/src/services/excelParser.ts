@@ -274,6 +274,15 @@ export function parsePolotskExcel(buffer: Buffer): ParsedRow[] {
  * Парсинг Excel рецепта технолога.
  * Ищет строки: наименование компонента | активность % | ввод % | г/т | кг на партию
  */
+
+// Convert Excel serial date to YYYY-MM-DD
+function excelSerialToDate(serial: number): string {
+  // Excel epoch is December 30, 1899
+  const epoch = new Date(1899, 11, 30);
+  const date = new Date(epoch.getTime() + serial * 24 * 60 * 60 * 1000);
+  return date.toISOString().split('T')[0];
+}
+
 export function parseRecipeExcel(buffer: Buffer): {
   name: string; code: string; date: string; batchKg: number; rows: RecipeRow[];
 } {
@@ -298,6 +307,14 @@ export function parseRecipeExcel(buffer: Buffer): {
     }
     if (!recipeCode) recipeCode = extractRecipeCode(line);
     const dateMatch = line.match(/(\d{2}[.\-\/]\d{2}[.\-\/]\d{2,4})/);
+    // Also check for Excel serial dates (numbers like 46267)
+    const serialMatch = line.match(/\b(\d{5})\b/);
+    if (serialMatch && !dateMatch) {
+      const serial = parseInt(serialMatch[1]);
+      if (serial > 40000 && serial < 50000) {
+        recipeDate = excelSerialToDate(serial);
+      }
+    }
     if (dateMatch) recipeDate = dateMatch[1];
     if (!batchKg) {
       // «Выработка: N т» → кг. Норма сырья в рецепте дана на 1 т, выработка

@@ -182,15 +182,49 @@ export default function RecipesTab({
   };
 
   const deleteAll = async () => {
+    console.log('[DELETE_ALL] counts.cancelled =', counts.cancelled);
     if (!confirm(`Удалить ВСЕ отменённые рецепты (${counts.cancelled})? Это действие необратимо.`)) return;
     setBusy(true);
     try {
       const cancelledUids = recipes.filter(r => categoryOf(r.status) === 'cancelled').map(r => r.recipe_uid);
-      const r = await axios.post(`${API}/recipes/bulk/delete`, { uids: cancelledUids });
+      const BATCH_SIZE = 10;
+      const DELAY_MS = 2000;
+      let totalDone = 0;
+      for (let i = 0; i < cancelledUids.length; i += BATCH_SIZE) {
+        const batch = cancelledUids.slice(i, i + BATCH_SIZE);
+        console.log(`[DELETE_ALL] batch ${Math.floor(i/BATCH_SIZE)+1}: ${batch.length} uids`);
+        const r = await axios.post(`${API}/recipes/bulk/delete`, { uids: batch });
+        totalDone += r.data.done || 0;
+        console.log(`[DELETE_ALL] batch done: ${r.data.done}`);
+        if (i + BATCH_SIZE < cancelledUids.length) {
+          console.log(`[DELETE_ALL] waiting ${DELAY_MS}ms before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+        }
+      }
+      flash(`✅ Удалено: ${totalDone}`);
+      setSel(new Set());
+      await reload();
+    } catch (e: any) {
+      console.error('[DELETE_ALL] error:', e);
+      flash(`❌ ${e.response?.data?.error || 'Ошибка'}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const deleteSelected = async () => {
+    console.log('[DELETE_SELECTED] sel.size =', sel.size, 'sel =', [...sel]);
+    if (!sel.size) return;
+    if (!confirm(`Удалить выбранные (${sel.size})? Это действие необратимо.`)) return;
+    setBusy(true);
+    try {
+      console.log('[DELETE_SELECTED] sending request...');
+      const r = await axios.post(`${API}/recipes/bulk/delete`, { uids: [...sel] });
+      console.log('[DELETE_SELECTED] response:', r.data);
       flash(`✅ Удалено: ${r.data.done}`);
       setSel(new Set());
       await reload();
     } catch (e: any) {
+      console.error('[DELETE_SELECTED] error:', e);
       flash(`❌ ${e.response?.data?.error || 'Ошибка'}`);
     } finally {
       setBusy(false);
@@ -227,7 +261,7 @@ export default function RecipesTab({
         )}
         {filter === 'cancelled' && (
           <>
-            <button onClick={() => bulk('cancel')} disabled={!sel.size || busy}
+            <button onClick={deleteSelected} disabled={!sel.size || busy}
               className="text-xs border border-red-600 text-red-300 px-2 py-1 rounded hover:bg-red-500/10 disabled:opacity-30">
               Удалить выбранные ({sel.size})
             </button>

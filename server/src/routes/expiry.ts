@@ -18,7 +18,7 @@ function getExpiryStatus(expiryDate: string): { status: string; daysRemaining: n
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const [batches, materials] = await Promise.all([getLipBatchesList(), getAllRawMaterials()]);
-    const nameMap = new Map(materials.map((m: any) => [m.uid, m.full_name]));
+    const nameMap = new Map(materials.map((m: any) => [m.raw_uid, m.full_name]));
     const latestByUid = new Map<string, any>();
     for (const batch of batches) {
       if (!batch.raw_uid) continue;

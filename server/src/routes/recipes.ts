@@ -25,12 +25,35 @@ import {
 } from "../services/sheetsService";
 import { withStockMutation } from "../services/stockMutex";
 
+
+// Auto-delete old cancelled recipes (keep max 20)
+const MAX_CANCELLED = 20;
+async function cleanupOldCancelled() {
+  try {
+    const recipes = await getRecipesList();
+    const cancelled = recipes
+      .filter(r => r.status === 'отменён')
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    if (cancelled.length > MAX_CANCELLED) {
+      const toDelete = cancelled.slice(0, cancelled.length - MAX_CANCELLED);
+      console.log(`[cleanup] Удаляю ${toDelete.length} старых отменённых рецептов (было ${cancelled.length}, оставляю ${MAX_CANCELLED})`);
+      for (const r of toDelete) {
+        await deleteRecipe(r.recipe_uid);
+      }
+      console.log(`[cleanup] Удалено ${toDelete.length} рецептов`);
+    }
+  } catch (err) {
+    console.error('[cleanup] Ошибка очистки:', err.message);
+  }
+}
+
 const router = Router();
 
 router.use(requireAuth);
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
+    cleanupOldCancelled().catch(err => console.error('[cleanup] background error:', err.message));
     res.json(await getRecipesList());
   } catch (err: any) {
     console.error("[recipes/list]", err);
@@ -302,23 +325,23 @@ router.post("/bulk", async (req: Request, res: Response) => {
 });
 
 
-// ─── Удаление рецептов ──────────────────────────────────────────────────
-
-router.delete("/:uid", async (req: Request, res: Response) => {
-  try {
-    const removed = await deleteRecipe(req.params.uid);
-    res.json({ ok: true, removed });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 router.post("/bulk/delete", async (req: Request, res: Response) => {
   const { uids } = req.body;
   if (!Array.isArray(uids) || !uids.length) return res.status(400).json({ error: "uids[] обязателен" });
   try {
     const done = await deleteRecipesBulk(uids);
     res.json({ ok: true, done });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Удаление рецептов ──────────────────────────────────────────────────
+
+router.delete("/:uid", async (req: Request, res: Response) => {
+  try {
+    const removed = await deleteRecipe(req.params.uid);
+    res.json({ ok: true, removed });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

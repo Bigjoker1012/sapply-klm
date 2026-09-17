@@ -157,7 +157,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     //    позиция (берём в разборку, списание и закупку); цена = 0 → позиция завода
     //    (исключаем); цена неизвестна (null, источник без колонки цены) → трактуем
     //    как нашу. matchBatch гоняем только по нашим строкам.
-    const isPlantRow = (r: any) => r.pricePerKg === 0;
+    const isPlantRow = (r: any) => r.pricePerKg === 0 && !/витамин|вит|vitamin/i.test(r.rawName);
     const matchMap = await matchBatch(
       parsed.rows.filter(r => !isPlantRow(r)).map(r => r.rawName)
     );
