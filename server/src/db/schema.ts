@@ -288,6 +288,12 @@ export const recipeItem = pgTable("recipe_item", {
   doseKgPerT: doublePrecision("dose_kg_per_t").notNull(),
   /** Порядок отображения */
   sortOrder: integer("sort_order").notNull().default(0),
+  /** Расход сырья, кг (из RecipeLines.consumption_kg) */
+  consumption_kg: doublePrecision("consumption_kg"),
+  /** Норма ввода, г/т */
+  norm_g_per_t: doublePrecision("norm_g_per_t"),
+  /** Статус сопоставления (matched/unresolved/ambiguous) */
+  match_status: text("match_status"),
   note: text("note"),
 }, (t) => ({
   uniqueRecipeSku: uniqueIndex("recipe_item_recipe_sku_unique").on(t.recipeId, t.skuId),
