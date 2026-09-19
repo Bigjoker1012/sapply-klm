@@ -30,6 +30,11 @@ import {
   pgWriteNeedFromRecipe,
   pgRewriteRecipeItems,
   PG_RECIPE_STATUSES,
+  pgWritePlantStock,
+  pgWriteLipStock,
+  pgWriteLipStockBatch,
+  pgGetStockSnapshots,
+  pgDeleteStockSnapshot,
 } from "./postgresSupplyService";
 
 import {
@@ -163,6 +168,35 @@ export async function rewriteRecipeItemsPG(recipeUid: string, lines: {
   raw_uid: string; consumption_kg: number; norm_g_per_t: number; match_status: string;
 }[]): Promise<void> {
   return pgRewriteRecipeItems(recipeUid, lines);
+}
+
+// ============================================================================
+// Stock Write Layer (TZ 3.8.1)
+// ============================================================================
+
+export async function writePlantStock(rows: { raw_uid: string; name_from_source: string; qty: number; source_file: string }[]): Promise<void> {
+  return pgWritePlantStock(rows);
+}
+
+export async function writeLipStock(
+  raw_uid: string, name_from_source: string,
+  qty_on_hand: number, reserved_qty: number, free_qty: number, source: string
+): Promise<void> {
+  return pgWriteLipStock(raw_uid, name_from_source, qty_on_hand, reserved_qty, free_qty, source);
+}
+
+export async function writeLipStockBatch(
+  rows: { raw_uid: string; name_from_source: string; qty: number; source: string }[]
+): Promise<void> {
+  return pgWriteLipStockBatch(rows);
+}
+
+export async function getStockSnapshots(warehouse: string): Promise<any[]> {
+  return pgGetStockSnapshots(warehouse);
+}
+
+export async function deleteStockSnapshot(warehouse: string, date: string): Promise<number> {
+  return pgDeleteStockSnapshot(warehouse, date);
 }
 
 // Re-export sheets-only functions (not yet migrated)

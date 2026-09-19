@@ -1,7 +1,8 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import { getLatestPlantStock, getAllRawMaterials } from "../services/readSwitch";
-import { getLipStockList, writeLipStock, getLipBatchesList, getAnalogs, addAnalog, deleteAnalog } from "../services/sheetsService";
+import { writeLipStock } from "../services/readSwitch";
+import { getLipStockList, getLipBatchesList, getAnalogs, addAnalog, deleteAnalog } from "../services/sheetsService";
 
 const router = Router();
 router.use(requireAuth);

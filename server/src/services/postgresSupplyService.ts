@@ -597,3 +597,171 @@ export async function pgWriteNeedFromRecipe(recipeUid: string, lines: { raw_uid:
     `);
   }
 }
+
+// ============================================================================
+// Stock WRITE Layer (TZ 3.8.1)
+// ============================================================================
+
+/**
+ * Write PlantStock snapshot for today.
+ * Replaces all today's entries (transactional: delete old → insert new).
+ */
+export async function pgWritePlantStock(rows: { raw_uid: string; name_from_source: string; qty: number; source_file: string }[]): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+  const polotskId = 1;
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // Delete existing snapshot for today
+      await db.execute(sql`DELETE FROM stock_snapshot WHERE warehouse_id = ${polotskId} AND snapshot_date = ${today}`);
+
+      // Build payload
+      const payload = [];
+      for (const row of rows) {
+        const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${row.raw_uid}`);
+        if (skuResult.rows.length === 0) continue;
+        const skuId = (skuResult.rows[0] as any).id;
+        payload.push({ sku_id: skuId, qty_kg: row.qty });
+      }
+
+      if (payload.length > 0) {
+        await db.execute(sql`
+          INSERT INTO stock_snapshot (warehouse_id, snapshot_date, source, payload_json)
+          VALUES (${polotskId}, ${today}, ${rows[0]?.source_file || 'upload'}, ${JSON.stringify(payload)})
+        `);
+      }
+
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+}
+
+/**
+ * Write single LipStock position (updates today's snapshot).
+ * Preserves other positions from the latest snapshot.
+ */
+export async function pgWriteLipStock(
+  raw_uid: string, name_from_source: string,
+  qty_on_hand: number, reserved_qty: number, free_qty: number, source: string
+): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+  const lipkovskayaId = 2;
+  const free = free_qty >= 0 ? free_qty : Math.max(0, qty_on_hand - reserved_qty);
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // Get latest snapshot
+      const latest = await db.execute(sql`SELECT payload_json FROM stock_snapshot WHERE warehouse_id = ${lipkovskayaId} ORDER BY snapshot_date DESC LIMIT 1`);
+      let existingPayload: any[] = latest.rows.length > 0 ? (latest.rows[0] as any).payload_json : [];
+      if (!Array.isArray(existingPayload)) existingPayload = [];
+
+      // Build new SKU map: keep existing + update/add this position
+      const skuByCode = new Map<number, number>();
+      for (const item of existingPayload) {
+        skuByCode.set(Number(item.sku_id), Number(item.qty_kg));
+      }
+
+      // Update or add the target SKU
+      const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${raw_uid}`);
+      if (skuResult.rows.length > 0) {
+        const skuId = (skuResult.rows[0] as any).id;
+        skuByCode.set(skuId, free);
+      }
+
+      // Delete existing today's snapshot
+      await db.execute(sql`DELETE FROM stock_snapshot WHERE warehouse_id = ${lipkovskayaId} AND snapshot_date = ${today}`);
+
+      // Build new payload
+      const newPayload = [];
+      for (const [skuId, qty] of skuByCode) {
+        newPayload.push({ sku_id: skuId, qty_kg: qty });
+      }
+
+      if (newPayload.length > 0) {
+        await db.execute(sql`
+          INSERT INTO stock_snapshot (warehouse_id, snapshot_date, source, payload_json)
+          VALUES (${lipkovskayaId}, ${today}, ${source || 'upload'}, ${JSON.stringify(newPayload)})
+        `);
+      }
+
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+}
+
+/**
+ * Write LipStock batch snapshot for today (full replace).
+ * Used by upload/lipkovskaya and upload/lipkovskaya-kd.
+ */
+export async function pgWriteLipStockBatch(
+  rows: { raw_uid: string; name_from_source: string; qty: number; source: string }[]
+): Promise<void> {
+  if (!rows.length) return;
+  const today = new Date().toISOString().split('T')[0];
+  const lipkovskayaId = 2;
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // Delete existing today's snapshot
+      await db.execute(sql`DELETE FROM stock_snapshot WHERE warehouse_id = ${lipkovskayaId} AND snapshot_date = ${today}`);
+
+      // Build payload
+      const payload = [];
+      for (const row of rows) {
+        const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${row.raw_uid}`);
+        if (skuResult.rows.length === 0) continue;
+        const skuId = (skuResult.rows[0] as any).id;
+        payload.push({ sku_id: skuId, qty_kg: row.qty });
+      }
+
+      if (payload.length > 0) {
+        await db.execute(sql`
+          INSERT INTO stock_snapshot (warehouse_id, snapshot_date, source, payload_json)
+          VALUES (${lipkovskayaId}, ${today}, ${rows[0]?.source || 'upload'}, ${JSON.stringify(payload)})
+        `);
+      }
+
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+}
+
+/** Get stock snapshots (for /api/stock/snapshots endpoint) */
+export async function pgGetStockSnapshots(warehouse: string): Promise<any[]> {
+  const whCode = warehouse.toLowerCase().includes('липков') ? 'LIPKOV' : 'POLOTSK';
+  const whResult = await db.execute(sql`SELECT id FROM warehouse WHERE code = ${whCode}`);
+  if (whResult.rows.length === 0) return [];
+  const whId = (whResult.rows[0] as any).id;
+
+  const result = await db.execute(sql`
+    SELECT snapshot_date, source, payload_json
+    FROM stock_snapshot
+    WHERE warehouse_id = ${whId}
+    ORDER BY snapshot_date DESC
+  `);
+  return result.rows.map((r: any) => ({
+    date: r.snapshot_date,
+    source: r.source,
+    items: Array.isArray(r.payload_json) ? r.payload_json.length : 0,
+  }));
+}
+
+/** Delete stock snapshot by date */
+export async function pgDeleteStockSnapshot(warehouse: string, date: string): Promise<number> {
+  const whCode = warehouse.toLowerCase().includes('липков') ? 'LIPKOV' : 'POLOTSK';
+  const whResult = await db.execute(sql`SELECT id FROM warehouse WHERE code = ${whCode}`);
+  if (whResult.rows.length === 0) return 0;
+  const whId = (whResult.rows[0] as any).id;
+
+  const result = await db.execute(sql`DELETE FROM stock_snapshot WHERE warehouse_id = ${whId} AND snapshot_date = ${date}`);
+  return (result as any).rowCount || 0;
+}

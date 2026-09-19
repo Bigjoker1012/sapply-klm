@@ -3,11 +3,14 @@ import { requireAuth } from "../auth/middleware";
 import multer from "multer";
 import {
   matchBatch, addToReviewQueueBatch,
-  writePlantStock, writeLipStockBatch, writeLipBatchesBulk,
-  writeRecipe, writeRecipeLines, writeNeedFromRecipe,
+  writeLipBatchesBulk,
   getUnresolvedQueue, resolveQueueItem, addAlias,
   filterKdSimilar, getExcludedList, addExcludedBatch, resolveQueueByText,
 } from "../services/sheetsService";
+import {
+  writePlantStock, writeLipStockBatch,
+  writeRecipePG, writeNeedFromRecipePG,
+} from "../services/readSwitch";
 import { withStockMutation } from "../services/stockMutex";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
 import { parsePolotskExcel, parseRecipeExcel, parseKdExcel, recipeCodeFromFilename, isOrgName, isApprovalText, recipeFullName } from "../services/excelParser";
@@ -168,7 +171,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     let unmatched = 0;
     let plant = 0;
     // Строки строим В ПАМЯТИ — до проверки достаточности склада ничего не пишем.
-    const lines: Parameters<typeof writeRecipeLines>[1] = [];
+    const lines: any[] = [];
     const needLines: { raw_uid: string; net_qty: number }[] = [];
     const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
     const queueItems: { text: string; source_type: string; file_name: string }[] = [];
@@ -233,28 +236,23 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       const recipeName = parsed.name && parsed.name !== "Рецепт" && !isOrgName(parsed.name) && !isApprovalText(parsed.name)
         ? parsed.name
         : (recipeCode ? recipeFullName(recipeCode) : "Рецепт");
-      const recipeUid = await writeRecipe({
+      const recipeUid = await writeRecipePG({
         code: recipeCode,
         full_name: recipeName,
         premix_name: recipeName,
         date: parsed.date,
-        concentration: 0,
         batch_t,
         customer: "",
-        period: new Date().toISOString().slice(0, 7),
-        quarter: `${Math.ceil((new Date().getMonth() + 1) / 3)}_квартал`,
-        file_name: up.originalname,
+                file_name: up.originalname,
         base_batch_kg,
+        lines: [],
       });
 
       await Promise.all([
-        writeRecipeLines(recipeUid, lines).catch(err => {
-          console.error("[upload/recipe] writeRecipeLines failed (non-fatal):", err?.message);
-        }),
         queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
       ]);
 
-      if (needLines.length) await writeNeedFromRecipe(recipeUid, needLines).catch(err => {
+      if (needLines.length) await writeNeedFromRecipePG(recipeUid, needLines).catch(err => {
         console.error("[upload/recipe] writeNeedFromRecipe failed (non-fatal):", err?.message);
       });
 
