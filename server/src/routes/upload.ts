@@ -9,7 +9,7 @@ import {
 } from "../services/readSwitch";
 import {
   writePlantStock, writeLipStockBatch,
-  writeRecipePG, writeNeedFromRecipePG,
+  writeRecipePG, writeNeedFromRecipePG, checkRecipeCodeExists,
 } from "../services/readSwitch";
 import { withStockMutation } from "../services/stockMutex";
 import { parsePolotskPdf, parseRecipePdf } from "../services/pdfParser";
@@ -236,6 +236,10 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       const recipeName = parsed.name && parsed.name !== "Рецепт" && !isOrgName(parsed.name) && !isApprovalText(parsed.name)
         ? parsed.name
         : (recipeCode ? recipeFullName(recipeCode) : "Рецепт");
+            const dupCheck = await checkRecipeCodeExists(recipeCode);
+      if (dupCheck.exists) {
+        return { duplicate: true, existingRecipeUid: dupCheck.recipeUid, existingStatus: dupCheck.status };
+      }
       const recipeUid = await writeRecipePG({
         code: recipeCode,
         full_name: recipeName,

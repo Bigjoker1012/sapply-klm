@@ -9,6 +9,14 @@ import { sql } from "drizzle-orm";
 // SKU / Справочник сырья
 // ============================================================================
 
+export async function checkRecipeCodeExists(code: string): Promise<{ exists: boolean; recipeUid?: string; status?: string }> {
+  const result = await db.execute(sql`SELECT recipe_uid, status FROM recipe WHERE code = ${code} LIMIT 1`);
+  if (result.rows.length > 0) {
+    return { exists: true, recipeUid: (result.rows[0] as any).recipe_uid, status: (result.rows[0] as any).status };
+  }
+  return { exists: false };
+}
+
 export async function getAllRawMaterials() {
   const result = await db.execute(sql`SELECT code, name, unit, active FROM sku`);
   return result.rows.map((r: any) => ({

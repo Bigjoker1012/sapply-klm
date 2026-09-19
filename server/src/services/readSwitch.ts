@@ -70,6 +70,7 @@ import {
   pgMergeRawMaterials,
   pgGetLipStockList,
   pgPartialArchive,
+  checkRecipeCodeExists as pgCheckRecipeCodeExists,
 } from "./postgresSupplyService";
 
 // ============================================================================
@@ -202,3 +203,4 @@ export async function mergeRawMaterials(sourceUid: string, targetUid: string, re
 
 export async function getLipStockList() { return pgGetLipStockList(); }
 export async function partialArchive(recipeUid: string, producedTons: number) { return pgPartialArchive(recipeUid, producedTons); }
+export async function checkRecipeCodeExists(code: string) { return pgCheckRecipeCodeExists(code); }
