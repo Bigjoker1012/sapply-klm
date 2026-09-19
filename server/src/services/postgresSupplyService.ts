@@ -1286,18 +1286,18 @@ export async function pgFilterKdSimilar(names: string[]): Promise<Set<string>> {
   ]);
 
   const refTexts: string[] = [];
-  for (const r of skuRows.rows) { refTexts.push(String((r as any).name || "")); if ((r as any).short_name) refTexts.push(String((r as any).short_name || "")); }
-  for (const r of aliasRows.rows) refTexts.push(String((r as any).alias || ""));
+  for (const r of skuRows.rows as any[]) { refTexts.push(String(r.name || "")); if (r.short_name) refTexts.push(String(r.short_name || "")); }
+  for (const r of aliasRows.rows as any[]) refTexts.push(String(r.alias || ""));
   // PlantStock names from payload
   if (plantResult.rows.length > 0) {
-    const payload: any[] = (plantResult.rows[0] as any).payload_json || [];
+    const payload = (plantResult.rows[0] as any).payload_json;
     if (Array.isArray(payload)) {
-      const skuIds = payload.map((p: any) => Number(p.sku_id));
-      const skuNames = await db.execute(sql`SELECT id, name FROM sku WHERE id = ANY(${skuIds}::int[])`);
-      for (const r of skuNames.rows) refTexts.push(String((r as any).name || ""));
+      const skuIds = payload.map((p: any) => p.sku_id);
+      const skuNames = await db.execute(sql`SELECT id, name FROM sku WHERE id = ANY(${skuIds})`);
+      for (const r of skuNames.rows as any[]) refTexts.push(String(r.name || ""));
     }
   }
-  for (const r of recipeItemResult.rows) refTexts.push(String((r as any).name || ""));
+  for (const r of recipeItemResult.rows as any[]) refTexts.push(String(r.name || ""));
 
   const refTokens = new Set<string>();
   for (const t of refTexts) for (const tok of significantTokens(String(t))) refTokens.add(tok);
@@ -1309,4 +1309,79 @@ export async function pgFilterKdSimilar(names: string[]): Promise<Set<string>> {
     if (shared.some(t => t.length >= 4) || shared.length >= 2) keep.add(name);
   }
   return keep;
+}
+
+// ============================================================================
+// RawMaterials CRUD (TZ 3.9.2)
+// ============================================================================
+
+export async function pgAddRawMaterial(data: {
+  code: string; name: string; short_name?: string; unit?: string;
+  category?: string; active?: boolean;
+}) {
+  const existing = await db.execute(sql`SELECT 1 FROM sku WHERE code = ${data.code}`);
+  if (existing.rows.length > 0) throw new Error('SKU already exists: ' + data.code);
+  await db.execute(sql`INSERT INTO sku (code, name, category, unit, active, short_name) VALUES (${data.code}, ${data.name}, ${data.category || 'other'}, ${data.unit || 'кг'}, ${data.active !== false}, ${data.short_name || null})`);
+}
+
+export async function pgUpdateRawMaterial(code: string, data: {
+  name?: string; short_name?: string; unit?: string; active?: boolean; category?: string;
+}) {
+  if (data.name !== undefined) await db.execute(sql`UPDATE sku SET name = ${data.name} WHERE code = ${code}`);
+  if (data.short_name !== undefined) await db.execute(sql`UPDATE sku SET short_name = ${data.short_name} WHERE code = ${code}`);
+  if (data.unit !== undefined) await db.execute(sql`UPDATE sku SET unit = ${data.unit} WHERE code = ${code}`);
+  if (data.active !== undefined) await db.execute(sql`UPDATE sku SET active = ${data.active} WHERE code = ${code}`);
+  if (data.category !== undefined) await db.execute(sql`UPDATE sku SET category = ${data.category} WHERE code = ${code}`);
+}
+
+export async function pgDeleteRawMaterial(code: string): Promise<boolean> {
+  const skuIdResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${code}`);
+  if (skuIdResult.rows.length === 0) return false;
+  const skuId = (skuIdResult.rows[0] as any).id;
+  const depCount = await db.execute(sql`SELECT (SELECT count(*) FROM recipe_item WHERE sku_id = ${skuId}) as recipe_item, (SELECT count(*) FROM need WHERE sku_id = ${skuId}) as need, (SELECT count(*) FROM in_transit WHERE sku_id = ${skuId}) as in_transit, (SELECT count(*) FROM lip_batch WHERE sku_id = ${skuId}) as lip_batch, (SELECT count(*) FROM sku_alias WHERE sku_id = ${skuId}) as sku_alias`);
+  const deps = depCount.rows[0] as any;
+  const totalDeps = (parseInt(deps.recipe_item) || 0) + (parseInt(deps.need) || 0) + (parseInt(deps.in_transit) || 0) + (parseInt(deps.lip_batch) || 0) + (parseInt(deps.sku_alias) || 0);
+  if (totalDeps > 0) throw new Error('Cannot delete ' + code + ': ' + totalDeps + ' dependent records exist');
+  const result = await db.execute(sql`DELETE FROM sku WHERE code = ${code}`);
+  return (result as any).rowCount > 0;
+}
+
+export async function pgMergeRawMaterials(sourceUid: string, targetUid: string, rename?: { full_name?: string; short_name?: string }) {
+  if (!sourceUid || !targetUid || sourceUid === targetUid) throw new Error('Need two different codes');
+  const sourceResult = await db.execute(sql`SELECT id, name FROM sku WHERE code = ${sourceUid}`);
+  const targetResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${targetUid}`);
+  if (sourceResult.rows.length === 0) throw new Error('Source SKU not found: ' + sourceUid);
+  if (targetResult.rows.length === 0) throw new Error('Target SKU not found: ' + targetUid);
+  const sourceId = (sourceResult.rows[0] as any).id;
+  const targetId = (targetResult.rows[0] as any).id;
+  const sourceName = (sourceResult.rows[0] as any).name;
+  let plant = 0, lip = 0, lipBatches = 0, inbound = 0, needCount = 0, aliasCount = 0;
+  await db.execute(sql`BEGIN`);
+  try {
+    aliasCount = ((await db.execute(sql`UPDATE sku_alias SET sku_id = ${targetId} WHERE sku_id = ${sourceId}`)) as any).rowCount || 0;
+    await db.execute(sql`UPDATE recipe_item SET sku_id = ${targetId} WHERE sku_id = ${sourceId}`);
+    await db.execute(sql`UPDATE lip_batch SET sku_id = ${targetId} WHERE sku_id = ${sourceId}`);
+    await db.execute(sql`UPDATE in_transit SET sku_id = ${targetId} WHERE sku_id = ${sourceId}`);
+    const stockRows = await db.execute(sql`SELECT id, payload_json, warehouse_id FROM stock_snapshot`);
+    for (const row of stockRows.rows) {
+      const r = row as any;
+      const payload = r.payload_json;
+      if (!Array.isArray(payload)) continue;
+      let changed = false;
+      for (const item of payload) {
+        if (Number(item.sku_id) === sourceId) { item.sku_id = targetId; changed = true; }
+      }
+      if (changed) {
+        await db.execute(sql`UPDATE stock_snapshot SET payload_json = ${JSON.stringify(payload)}::jsonb WHERE id = ${r.id}`);
+        if (r.warehouse_id === 1) plant++; else lip++;
+      }
+    }
+    if (sourceName) await db.execute(sql`INSERT INTO sku_alias (sku_id, alias, canonical_raw_uid, source) VALUES (${targetId}, ${sourceName}, ${targetUid}, 'merge') ON CONFLICT DO NOTHING`);
+    await db.execute(sql`UPDATE sku SET active = false, name = name || ' [MERGED to ' || ${targetUid} || ']' WHERE id = ${sourceId}`);
+    await db.execute(sql`COMMIT`);
+  } catch (e) {
+    await db.execute(sql`ROLLBACK`);
+    throw e;
+  }
+  return { plant, lip, lipBatches, inbound, need: needCount, aliases: aliasCount };
 }

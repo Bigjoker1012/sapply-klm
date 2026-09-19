@@ -64,6 +64,10 @@ import {
   pgUpdateLipBatchExpiry,
   pgGetLatestLipBatchStock,
   pgFilterKdSimilar,
+  pgAddRawMaterial,
+  pgUpdateRawMaterial,
+  pgDeleteRawMaterial,
+  pgMergeRawMaterials,
 } from "./postgresSupplyService";
 
 import {
@@ -293,6 +297,15 @@ export async function writeLipBatchesBulk(rows: { raw_uid: string; batch_code: s
 export async function updateLipBatchExpiry(rawUid: string, expiryDate: string | null, manufactureDate: string | null) { return pgUpdateLipBatchExpiry(rawUid, expiryDate, manufactureDate); }
 export async function getLatestLipBatchStock() { return pgGetLatestLipBatchStock(); }
 export async function filterKdSimilar(names: string[]) { return pgFilterKdSimilar(names); }
+
+// ============================================================================
+// RawMaterials CRUD (TZ 3.9.2)
+// ============================================================================
+
+export async function addRawMaterial(data: { code: string; name: string; short_name?: string; unit?: string; category?: string; active?: boolean }) { return pgAddRawMaterial(data); }
+export async function updateRawMaterial(code: string, data: { name?: string; short_name?: string; unit?: string; active?: boolean; category?: string }) { return pgUpdateRawMaterial(code, data); }
+export async function deleteRawMaterial(code: string) { return pgDeleteRawMaterial(code); }
+export async function mergeRawMaterials(sourceUid: string, targetUid: string, rename?: { full_name?: string; short_name?: string }) { return pgMergeRawMaterials(sourceUid, targetUid, rename); }
 
 // Re-export sheets-only functions (NOT yet migrated to PG)
 export {
