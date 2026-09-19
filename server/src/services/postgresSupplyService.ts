@@ -27,62 +27,40 @@ export async function getAllRawMaterials() {
 // Stock / Остатки
 // ============================================================================
 
-function sumLatestSnapshot(rows: any[][], qtyOf: (r: any[]) => number): Map<string, number> {
-  let maxDate = "";
-  for (const r of rows) {
-    const d = String(r[0] || "").trim();
-    if (d > maxDate) maxDate = d;
+async function readStockSnapshot(warehouseId: number): Promise<Map<string, number>> {
+  const result = await db.execute(sql`SELECT payload_json FROM stock_snapshot WHERE warehouse_id = ${warehouseId} ORDER BY snapshot_date DESC LIMIT 1`);
+  if (result.rows.length === 0) return new Map();
+
+  const payload = result.rows[0].payload_json as any[];
+  if (!Array.isArray(payload)) return new Map();
+
+  // Build SKU id→code map in one query
+  const skuResult = await db.execute(sql`SELECT id, code FROM sku`) as any;
+  const skuMap = new Map<number, string>();
+  for (const row of skuResult.rows) {
+    skuMap.set(Number(row.id), row.code);
   }
+
+  // SUM by SKU code (matches Sheets behavior)
   const map = new Map<string, number>();
-  if (!maxDate) return map;
-  for (const r of rows) {
-    const d = String(r[0] || "").trim();
-    if (d !== maxDate) continue;
-    if (!r[1]) continue;
-    const uid = String(r[1]);
-    map.set(uid, (map.get(uid) || 0) + qtyOf(r));
+  for (const item of payload) {
+    if (item.sku_id && item.qty_kg) {
+      const skuId = Number(item.sku_id);
+      const code = skuMap.get(skuId);
+      if (code) {
+        map.set(code, (map.get(code) || 0) + Number(item.qty_kg));
+      }
+    }
   }
   return map;
 }
 
 export async function getLatestPlantStock(): Promise<Map<string, number>> {
-  const polotskId = 1;
-  const result = await db.execute(sql`SELECT payload_json FROM stock_snapshot WHERE warehouse_id = ${polotskId} ORDER BY snapshot_date DESC LIMIT 1`);
-  if (result.rows.length > 0) {
-    const payload = result.rows[0].payload_json as any[];
-    const map = new Map<string, number>();
-    for (const item of payload) {
-      if (item.sku_id && item.qty_kg) {
-        const skuId = Number(item.sku_id);
-        const skuResult = await db.execute(sql`SELECT code FROM sku WHERE id = ${skuId}`) as any;
-        if (skuResult.rows.length > 0) {
-          map.set(skuResult.rows[0].code, item.qty_kg);
-        }
-      }
-    }
-    return map;
-  }
-  return new Map();
+  return readStockSnapshot(1);
 }
 
 export async function getLatestLipStock(): Promise<Map<string, number>> {
-  const lipkovskayaId = 2;
-  const result = await db.execute(sql`SELECT payload_json FROM stock_snapshot WHERE warehouse_id = ${lipkovskayaId} ORDER BY snapshot_date DESC LIMIT 1`);
-  if (result.rows.length > 0) {
-    const payload = result.rows[0].payload_json as any[];
-    const map = new Map<string, number>();
-    for (const item of payload) {
-      if (item.sku_id && item.qty_kg) {
-        const skuId = Number(item.sku_id);
-        const skuResult = await db.execute(sql`SELECT code FROM sku WHERE id = ${skuId}`) as any;
-        if (skuResult.rows.length > 0) {
-          map.set(skuResult.rows[0].code, item.qty_kg);
-        }
-      }
-    }
-    return map;
-  }
-  return new Map();
+  return readStockSnapshot(2);
 }
 
 // ============================================================================
