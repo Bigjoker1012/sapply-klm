@@ -2,8 +2,9 @@ import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import multer from "multer";
 import {
-  matchBatch, writeLipBatchesBulk, filterKdSimilar,
+  matchBatch,
 } from "../services/sheetsService";
+import { writeLipBatchesBulk, filterKdSimilar } from "../services/readSwitch";
 import {
   getExcludedList as getExcludedPG, addExcludedBatch as addExcludedBatchPG,
   getUnresolved as getUnresolvedPG, addUnresolvedBatch, resolveUnresolvedByText as resolveUnresolvedByTextPG,

@@ -59,6 +59,11 @@ import {
   pgResolveUnresolvedByText,
   pgDeleteUnresolved,
   pgMatchBatch,
+  pgGetLipBatches,
+  pgWriteLipBatchesBulk,
+  pgUpdateLipBatchExpiry,
+  pgGetLatestLipBatchStock,
+  pgFilterKdSimilar,
 } from "./postgresSupplyService";
 
 import {
@@ -279,9 +284,18 @@ export async function matchBatch(names: string[]): Promise<Map<string, string | 
   return pgMatchBatch(names);
 }
 
+// ============================================================================
+// LipBatches Layer (TZ 3.9.1)
+// ============================================================================
+
+export async function getLipBatchesList() { return pgGetLipBatches(); }
+export async function writeLipBatchesBulk(rows: { raw_uid: string; batch_code: string; vendor_name: string; qty: number; source: string; expiry_date?: string; manufacture_date?: string }[]) { return pgWriteLipBatchesBulk(rows); }
+export async function updateLipBatchExpiry(rawUid: string, expiryDate: string | null, manufactureDate: string | null) { return pgUpdateLipBatchExpiry(rawUid, expiryDate, manufactureDate); }
+export async function getLatestLipBatchStock() { return pgGetLatestLipBatchStock(); }
+export async function filterKdSimilar(names: string[]) { return pgFilterKdSimilar(names); }
+
 // Re-export sheets-only functions (NOT yet migrated to PG)
 export {
-  getLipBatchesList,
   getUnresolvedQueue,
   parseAliasRows,
   readRange,

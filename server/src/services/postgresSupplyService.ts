@@ -1187,3 +1187,126 @@ export async function pgMatchBatch(names: string[]): Promise<Map<string, string 
   }
   return result;
 }
+
+// ============================================================================
+// LipBatches Layer (TZ 3.9.1)
+// ============================================================================
+
+export async function pgGetLipBatches() {
+  const result = await db.execute(sql`
+    SELECT l.id, s.code as raw_uid, l.snapshot_date, l.batch_code,
+           l.vendor_name, l.qty_kg, l.unit, l.source, l.expiry_date, l.manufacture_date
+    FROM lip_batch l JOIN sku s ON l.sku_id = s.id
+    ORDER BY l.snapshot_date DESC, s.code
+  `);
+  return result.rows.map((r: any) => ({
+    id: r.id, raw_uid: r.raw_uid, snapshot_date: r.snapshot_date,
+    batch_code: r.batch_code, vendor_name: r.vendor_name, qty: r.qty_kg,
+    unit: r.unit, source: r.source, expiry_date: r.expiry_date, manufacture_date: r.manufacture_date,
+  }));
+}
+
+export async function pgWriteLipBatchesBulk(rows: {
+  raw_uid: string; batch_code: string; vendor_name: string; qty: number;
+  source: string; expiry_date?: string; manufacture_date?: string;
+}[]): Promise<void> {
+  if (!rows.length) return;
+  const today = new Date().toISOString().split('T')[0];
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // Delete today's rows
+      await db.execute(sql`DELETE FROM lip_batch WHERE snapshot_date = ${today}`);
+
+      for (const row of rows) {
+        const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${row.raw_uid}`);
+        if (skuResult.rows.length === 0) continue;
+        const skuId = (skuResult.rows[0] as any).id;
+        await db.execute(sql`
+          INSERT INTO lip_batch (sku_id, snapshot_date, batch_code, vendor_name, qty_kg, unit, source, expiry_date, manufacture_date)
+          VALUES (${skuId}, ${today}, ${row.batch_code}, ${row.vendor_name}, ${row.qty}, 'кг', ${row.source || 'kd_file'}, ${row.expiry_date || null}, ${row.manufacture_date || null})
+        `);
+      }
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+}
+
+export async function pgUpdateLipBatchExpiry(rawUid: string, expiryDate: string | null, manufactureDate: string | null): Promise<number> {
+  const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${rawUid}`);
+  if (skuResult.rows.length === 0) return 0;
+  const skuId = (skuResult.rows[0] as any).id;
+
+  // Find latest snapshot for this SKU
+  const latest = await db.execute(sql`
+    SELECT id, snapshot_date FROM lip_batch WHERE sku_id = ${skuId} ORDER BY snapshot_date DESC LIMIT 1
+  `);
+  if (latest.rows.length === 0) return 0;
+
+  const batchId = (latest.rows[0] as any).id;
+  await db.execute(sql`
+    UPDATE lip_batch SET expiry_date = ${expiryDate || ''}, manufacture_date = ${manufactureDate || ''}
+    WHERE id = ${batchId}
+  `);
+  return 1;
+}
+
+export async function pgGetLatestLipBatchStock(): Promise<Map<string, number>> {
+  const result = await db.execute(sql`
+    SELECT s.code, l.qty_kg, l.snapshot_date
+    FROM lip_batch l JOIN sku s ON l.sku_id = s.id
+    ORDER BY l.snapshot_date DESC
+  `);
+  const map = new Map<string, number>();
+  const seenDates = new Map<string, string>();
+  for (const row of result.rows) {
+    const code = row.code as string;
+    const date = row.snapshot_date as string;
+    if (!seenDates.has(code) || seenDates.get(code) === date) {
+      map.set(code, (map.get(code) || 0) + (parseFloat(row.qty_kg as string) || 0));
+      seenDates.set(code, date);
+    }
+  }
+  return map;
+}
+
+export async function pgFilterKdSimilar(names: string[]): Promise<Set<string>> {
+  const keep = new Set<string>();
+  if (!names.length) return keep;
+
+  // Load reference data from PG
+  const [skuRows, aliasRows, plantResult, recipeItemResult] = await Promise.all([
+    db.execute(sql`SELECT name, short_name FROM sku WHERE active = true`),
+    db.execute(sql`SELECT alias FROM sku_alias`),
+    db.execute(sql`SELECT payload_json FROM stock_snapshot WHERE warehouse_id = 1 ORDER BY snapshot_date DESC LIMIT 1`),
+    db.execute(sql`SELECT DISTINCT s.name FROM recipe_item ri JOIN sku s ON ri.sku_id = s.id`),
+  ]);
+
+  const refTexts: string[] = [];
+  for (const r of skuRows.rows) { refTexts.push(String((r as any).name || "")); if ((r as any).short_name) refTexts.push(String((r as any).short_name || "")); }
+  for (const r of aliasRows.rows) refTexts.push(String((r as any).alias || ""));
+  // PlantStock names from payload
+  if (plantResult.rows.length > 0) {
+    const payload: any[] = (plantResult.rows[0] as any).payload_json || [];
+    if (Array.isArray(payload)) {
+      const skuIds = payload.map((p: any) => Number(p.sku_id));
+      const skuNames = await db.execute(sql`SELECT id, name FROM sku WHERE id = ANY(${skuIds}::int[])`);
+      for (const r of skuNames.rows) refTexts.push(String((r as any).name || ""));
+    }
+  }
+  for (const r of recipeItemResult.rows) refTexts.push(String((r as any).name || ""));
+
+  const refTokens = new Set<string>();
+  for (const t of refTexts) for (const tok of significantTokens(String(t))) refTokens.add(tok);
+
+  for (const name of names) {
+    const toks = significantTokens(name);
+    if (!toks.length) continue;
+    const shared = toks.filter(t => refTokens.has(t));
+    if (shared.some(t => t.length >= 4) || shared.length >= 2) keep.add(name);
+  }
+  return keep;
+}

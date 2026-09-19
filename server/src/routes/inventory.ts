@@ -3,7 +3,8 @@ import { requireAuth } from "../auth/middleware";
 import { getLatestPlantStock, getAllRawMaterials } from "../services/readSwitch";
 import { writeLipStock } from "../services/readSwitch";
 import { getAnalogs, addAnalog, deleteAnalog } from "../services/readSwitch";
-import { getLipStockList, getLipBatchesList } from "../services/sheetsService";
+import { getLipBatchesList } from "../services/readSwitch";
+import { getLipStockList } from "../services/sheetsService";
 
 const router = Router();
 router.use(requireAuth);

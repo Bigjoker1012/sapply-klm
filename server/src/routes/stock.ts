@@ -11,8 +11,8 @@
  */
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
-import { getLatestPlantStock, getLatestLipStock, getLiveStock, getStockDeficit } from "../services/readSwitch";
-import { writePlantStock, writeLipStock, getStockSnapshots, deleteStockSnapshot } from "../services/sheetsService";
+import { getLatestPlantStock, getLatestLipStock, getLiveStock, getStockDeficit, writePlantStock, writeLipStock, getStockSnapshots, deleteStockSnapshot } from "../services/readSwitch";
+
 
 const router = Router();
 
@@ -39,7 +39,7 @@ router.get("/deficit", async (_req: Request, res: Response) => {
 
 router.get("/snapshots", async (_req: Request, res: Response) => {
   try {
-    res.json(await getStockSnapshots());
+    res.json(await getStockSnapshots(String(_req.query.warehouse || "POLOTSK")));
   } catch (err: any) {
     console.error("[stock/snapshots]", err);
     res.status(500).json({ error: err.message });
