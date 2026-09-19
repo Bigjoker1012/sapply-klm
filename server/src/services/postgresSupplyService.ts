@@ -242,3 +242,81 @@ export async function deleteInboundByMaterial(raw_uid: string): Promise<number> 
   const result = await db.execute(sql`UPDATE in_transit SET status = 'received' WHERE sku_id = ${skuId} AND status NOT IN ('received')`);
   return (result as any).rowCount || 0;
 }
+
+// ============================================================================
+// Live Stock / Живые остатки
+// ============================================================================
+
+/**
+ * PG status mapping (Sheets → PG):
+ *   план      → active   (stock consuming)
+ *   в работе  → active   (stock consuming)
+ *   активен   → active   (stock consuming, legacy)
+ *   архив     → archived (NOT consuming)
+ *   отменён   → (not in PG — recipes with this status were not migrated)
+ *
+ * STOCK_CONSUMING_STATUSES in PG = {'active'}
+ */
+function round2(n: number): number { return Math.round((n + Number.EPSILON) * 100) / 100; }
+function round3(n: number): number { return Math.round((n + Number.EPSILON) * 1000) / 1000; }
+
+function stockSignal(plant_qty: number, lip_qty: number, consumed: number): "critical" | "transfer" | "ok" {
+  const available = round2(plant_qty + lip_qty - consumed);
+  if (available < -1e-6) return "critical";
+  if (round2(plant_qty - consumed) < -1e-6) return "transfer";
+  return "ok";
+}
+
+export async function getRecipeConsumption(): Promise<Map<string, number>> {
+  // Only recipes with status='active' consume stock (plan + в работе + активен → active)
+  const result = await db.execute(sql`
+    SELECT s.code, SUM(ri.consumption_kg) as total
+    FROM recipe_item ri
+    JOIN recipe r ON ri.recipe_id = r.id
+    JOIN sku s ON ri.sku_id = s.id
+    WHERE r.status = 'active'
+      AND ri.consumption_kg IS NOT NULL
+      AND ri.consumption_kg > 0
+    GROUP BY s.code
+  `);
+  const map = new Map<string, number>();
+  for (const row of result.rows) {
+    map.set(row.code as string, round3(parseFloat(row.total as string) || 0));
+  }
+  return map;
+}
+
+export async function getLiveStock() {
+  const [plant, lip, inbound, consumed, catalog] = await Promise.all([
+    getLatestPlantStock(),
+    getLatestLipStock(),
+    getInboundTotals(),
+    getRecipeConsumption(),
+    getAllRawMaterials(),
+  ]);
+  const nameByUid = new Map(catalog.map(m => [m.raw_uid, m.full_name]));
+  const uids = new Set<string>([...plant.keys(), ...lip.keys(), ...inbound.keys(), ...consumed.keys()]);
+  const out = [];
+  for (const uid of uids) {
+    const plant_qty = plant.get(uid) || 0;
+    const lip_qty = lip.get(uid) || 0;
+    const inbound_qty = inbound.get(uid) || 0;
+    const base = round2(plant_qty + lip_qty);
+    const cons = consumed.get(uid) || 0;
+    out.push({
+      raw_uid: uid, name: nameByUid.get(uid) || uid,
+      plant_qty, lip_qty, inbound_qty, base,
+      consumed: cons, available: round2(base + inbound_qty - cons),
+      signal: stockSignal(plant_qty + inbound_qty, lip_qty, cons),
+    });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  return out;
+}
+
+export async function getStockDeficit() {
+  // For now, deficit uses the same logic as liveStock plus per-recipe breakdown
+  const live = await getLiveStock();
+  // Add empty contributors for now — full deficit breakdown requires recipe-level details
+  return (live as any[]).map((item: any) => ({ ...item, contributors: [] }));
+}

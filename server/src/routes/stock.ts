@@ -11,8 +11,8 @@
  */
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
-import { getLatestPlantStock, getLatestLipStock } from "../services/readSwitch";
-import { writePlantStock, writeLipStock, getLiveStock, getStockDeficit, getStockSnapshots, deleteStockSnapshot } from "../services/sheetsService";
+import { getLatestPlantStock, getLatestLipStock, getLiveStock, getStockDeficit } from "../services/readSwitch";
+import { writePlantStock, writeLipStock, getStockSnapshots, deleteStockSnapshot } from "../services/sheetsService";
 
 const router = Router();
 

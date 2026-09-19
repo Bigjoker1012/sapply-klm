@@ -10,3 +10,4 @@ data/
 *.db-wal
 google_sa.json
 *.js
+stock_live_postgres.json

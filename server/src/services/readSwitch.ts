@@ -19,6 +19,8 @@ import {
   updateInboundStatus as pgUpdateInboundStatus,
   deleteInbound as pgDeleteInbound,
   deleteInboundByMaterial as pgDeleteInboundByMaterial,
+  getLiveStock as pgGetLiveStock,
+  getStockDeficit as pgGetStockDeficit,
 } from "./postgresSupplyService";
 
 import {
@@ -35,6 +37,8 @@ import {
   updateInboundStatus as sheetsUpdateInboundStatus,
   deleteInbound as sheetsDeleteInbound,
   deleteInboundByMaterial as sheetsDeleteInboundByMaterial,
+  getLiveStock as sheetsGetLiveStock,
+  getStockDeficit as sheetsGetStockDeficit,
 } from "./sheetsService";
 
 const DATA_SOURCE = process.env.SUPPLY_DATA_SOURCE || "sheets";
@@ -97,6 +101,14 @@ export async function deleteInbound(id: string): Promise<void> {
 
 export async function deleteInboundByMaterial(raw_uid: string): Promise<number> {
   return isPG() ? pgDeleteInboundByMaterial(raw_uid) : sheetsDeleteInboundByMaterial(raw_uid);
+}
+
+export async function getLiveStock() {
+  return isPG() ? pgGetLiveStock() : sheetsGetLiveStock();
+}
+
+export async function getStockDeficit() {
+  return isPG() ? pgGetStockDeficit() : sheetsGetStockDeficit();
 }
 
 // Re-export sheets-only functions (not yet migrated)
