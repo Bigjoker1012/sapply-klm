@@ -819,13 +819,13 @@ export async function pgGetNeedBySku() {
 
 export async function pgGetAliases() {
   const result = await db.execute(sql`
-    SELECT sa.id, sa.alias, sa.canonical_raw_uid, sa.source, s.code as sku_code, s.name as sku_name
+    SELECT sa.id, sa.alias, s.code as sku_code, s.name as sku_name, sa.source
     FROM sku_alias sa
     LEFT JOIN sku s ON sa.sku_id = s.id
     ORDER BY sa.alias
   `);
   return result.rows.map((r: any) => ({
-    id: r.id, alias: r.alias, raw_uid: r.sku_code || r.canonical_raw_uid,
+    id: r.id, alias: r.alias, raw_uid: r.sku_code || '',
     source: r.source, sku_name: r.sku_name || '',
   }));
 }

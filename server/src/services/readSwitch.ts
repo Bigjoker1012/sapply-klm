@@ -1,8 +1,8 @@
 /**
- * TZ 3.5 — Read Switch for Supply KLM
- * 
- * Routes use this to choose between Sheets and PostgreSQL data sources.
- * Controlled by SUPPLY_DATA_SOURCE env var.
+ * TZ 3.9.5 — PostgreSQL-only Data Layer for Supply KLM
+ *
+ * All functions read/write from PostgreSQL only.
+ * Google Sheets is no longer used as a data source.
  */
 
 import {
@@ -72,96 +72,28 @@ import {
   pgPartialArchive,
 } from "./postgresSupplyService";
 
-import {
-  getAllRawMaterials as sheetsGetAllRawMaterials,
-  getLatestPlantStock as sheetsGetLatestPlantStock,
-  getLatestLipStock as sheetsGetLatestLipStock,
-  getRecipesList as sheetsGetRecipesList,
-  getRecipeLines as sheetsGetRecipeLines,
-  getNeedTotals as sheetsGetNeedTotals,
-  getExcludedList as sheetsGetExcludedList,
-  getInboundList as sheetsGetInboundList,
-  getInboundTotals as sheetsGetInboundTotals,
-  addInbound as sheetsAddInbound,
-  updateInboundStatus as sheetsUpdateInboundStatus,
-  deleteInbound as sheetsDeleteInbound,
-  deleteInboundByMaterial as sheetsDeleteInboundByMaterial,
-  getLiveStock as sheetsGetLiveStock,
-  getStockDeficit as sheetsGetStockDeficit,
-} from "./sheetsService";
-
-const DATA_SOURCE = process.env.SUPPLY_DATA_SOURCE || "sheets";
-
-function isPG(): boolean {
-  return DATA_SOURCE === "postgres";
-}
-
 // ============================================================================
-// Switched Functions
+// Read Layer — PostgreSQL only
 // ============================================================================
 
-export async function getAllRawMaterials() {
-  return isPG() ? pgGetAllRawMaterials() : sheetsGetAllRawMaterials();
-}
-
-export async function getLatestPlantStock() {
-  return isPG() ? pgGetLatestPlantStock() : sheetsGetLatestPlantStock();
-}
-
-export async function getLatestLipStock() {
-  return isPG() ? pgGetLatestLipStock() : sheetsGetLatestLipStock();
-}
-
-export async function getRecipesList() {
-  return isPG() ? pgGetRecipesList() : sheetsGetRecipesList();
-}
-
-export async function getRecipeLines(recipe_uid: string) {
-  return isPG() ? pgGetRecipeLines(recipe_uid) : sheetsGetRecipeLines(recipe_uid);
-}
-
-export async function getNeedTotals() {
-  return isPG() ? pgGetNeedTotals() : sheetsGetNeedTotals();
-}
-
-export async function getExcludedList() {
-  return isPG() ? pgGetExcludedList() : sheetsGetExcludedList();
-}
-
-export async function getInboundList() {
-  return isPG() ? pgGetInboundList() : sheetsGetInboundList();
-}
-
-export async function getInboundTotals(): Promise<Map<string, number>> {
-  return isPG() ? pgGetInboundTotals() : sheetsGetInboundTotals();
-}
-
-export async function addInbound(raw_uid: string, raw_name: string, qty: number, eta: string, destination: string, document: string): Promise<string> {
-  return isPG() ? pgAddInbound(raw_uid, raw_name, qty, eta, destination, document) : sheetsAddInbound(raw_uid, raw_name, qty, eta, destination, document);
-}
-
-export async function updateInboundStatus(id: string, status: string): Promise<void> {
-  return isPG() ? pgUpdateInboundStatus(id, status) : sheetsUpdateInboundStatus(id, status);
-}
-
-export async function deleteInbound(id: string): Promise<void> {
-  return isPG() ? pgDeleteInbound(id) : sheetsDeleteInbound(id);
-}
-
-export async function deleteInboundByMaterial(raw_uid: string): Promise<number> {
-  return isPG() ? pgDeleteInboundByMaterial(raw_uid) : sheetsDeleteInboundByMaterial(raw_uid);
-}
-
-export async function getLiveStock() {
-  return isPG() ? pgGetLiveStock() : sheetsGetLiveStock();
-}
-
-export async function getStockDeficit() {
-  return isPG() ? pgGetStockDeficit() : sheetsGetStockDeficit();
-}
+export async function getAllRawMaterials() { return pgGetAllRawMaterials(); }
+export async function getLatestPlantStock() { return pgGetLatestPlantStock(); }
+export async function getLatestLipStock() { return pgGetLatestLipStock(); }
+export async function getRecipesList() { return pgGetRecipesList(); }
+export async function getRecipeLines(recipe_uid: string) { return pgGetRecipeLines(recipe_uid); }
+export async function getNeedTotals() { return pgGetNeedTotals(); }
+export async function getExcludedList() { return pgGetExcludedList(); }
+export async function getInboundList() { return pgGetInboundList(); }
+export async function getInboundTotals(): Promise<Map<string, number>> { return pgGetInboundTotals(); }
+export async function addInbound(raw_uid: string, raw_name: string, qty: number, eta: string, destination: string, document: string): Promise<string> { return pgAddInbound(raw_uid, raw_name, qty, eta, destination, document); }
+export async function updateInboundStatus(id: string, status: string): Promise<void> { return pgUpdateInboundStatus(id, status); }
+export async function deleteInbound(id: string): Promise<void> { return pgDeleteInbound(id); }
+export async function deleteInboundByMaterial(raw_uid: string): Promise<number> { return pgDeleteInboundByMaterial(raw_uid); }
+export async function getLiveStock() { return pgGetLiveStock(); }
+export async function getStockDeficit() { return pgGetStockDeficit(); }
 
 // ============================================================================
-// Recipe Write Layer (TZ 3.8)
+// Recipe Write Layer
 // ============================================================================
 
 export { PG_RECIPE_STATUSES };
@@ -171,71 +103,28 @@ export async function writeRecipePG(recipe: {
   batch_t: number; customer: string; file_name: string; base_batch_kg: number;
   lines: { raw_uid: string; name_from_recipe: string; input_pct: number;
            norm_g_per_t: number; consumption_kg: number; match_status: string; }[];
-}): Promise<string> {
-  return pgWriteRecipe(recipe);
-}
+}): Promise<string> { return pgWriteRecipe(recipe); }
 
-export async function setRecipeStatusPG(recipeUid: string, status: string): Promise<boolean> {
-  return pgSetRecipeStatus(recipeUid, status);
-}
-
-export async function updateRecipeTonsPG(recipeUid: string, newTons: number) {
-  return pgUpdateRecipeTons(recipeUid, newTons);
-}
-
-export async function deleteRecipePG(recipeUid: string): Promise<number> {
-  return pgDeleteRecipe(recipeUid);
-}
-
-export async function deleteRecipesBulkPG(recipeUids: string[]): Promise<number> {
-  return pgDeleteRecipesBulk(recipeUids);
-}
-
-export async function deleteNeedByRecipePG(recipeUid: string): Promise<number> {
-  return pgDeleteNeedByRecipe(recipeUid);
-}
-
-export async function writeNeedFromRecipePG(recipeUid: string, lines: { raw_uid: string; net_qty: number }[]): Promise<void> {
-  return pgWriteNeedFromRecipe(recipeUid, lines);
-}
-
-export async function rewriteRecipeItemsPG(recipeUid: string, lines: {
-  raw_uid: string; consumption_kg: number; norm_g_per_t: number; match_status: string;
-}[]): Promise<void> {
-  return pgRewriteRecipeItems(recipeUid, lines);
-}
+export async function setRecipeStatusPG(recipeUid: string, status: string): Promise<boolean> { return pgSetRecipeStatus(recipeUid, status); }
+export async function updateRecipeTonsPG(recipeUid: string, newTons: number) { return pgUpdateRecipeTons(recipeUid, newTons); }
+export async function deleteRecipePG(recipeUid: string): Promise<number> { return pgDeleteRecipe(recipeUid); }
+export async function deleteRecipesBulkPG(recipeUids: string[]): Promise<number> { return pgDeleteRecipesBulk(recipeUids); }
+export async function deleteNeedByRecipePG(recipeUid: string): Promise<number> { return pgDeleteNeedByRecipe(recipeUid); }
+export async function writeNeedFromRecipePG(recipeUid: string, lines: { raw_uid: string; net_qty: number }[]): Promise<void> { return pgWriteNeedFromRecipe(recipeUid, lines); }
+export async function rewriteRecipeItemsPG(recipeUid: string, lines: { raw_uid: string; consumption_kg: number; norm_g_per_t: number; match_status: string; }[]): Promise<void> { return pgRewriteRecipeItems(recipeUid, lines); }
 
 // ============================================================================
-// Stock Write Layer (TZ 3.8.1)
+// Stock Write Layer
 // ============================================================================
 
-export async function writePlantStock(rows: { raw_uid: string; name_from_source: string; qty: number; source_file: string }[]): Promise<void> {
-  return pgWritePlantStock(rows);
-}
-
-export async function writeLipStock(
-  raw_uid: string, name_from_source: string,
-  qty_on_hand: number, reserved_qty: number, free_qty: number, source: string
-): Promise<void> {
-  return pgWriteLipStock(raw_uid, name_from_source, qty_on_hand, reserved_qty, free_qty, source);
-}
-
-export async function writeLipStockBatch(
-  rows: { raw_uid: string; name_from_source: string; qty: number; source: string }[]
-): Promise<void> {
-  return pgWriteLipStockBatch(rows);
-}
-
-export async function getStockSnapshots(warehouse: string): Promise<any[]> {
-  return pgGetStockSnapshots(warehouse);
-}
-
-export async function deleteStockSnapshot(warehouse: string, date: string): Promise<number> {
-  return pgDeleteStockSnapshot(warehouse, date);
-}
+export async function writePlantStock(rows: { raw_uid: string; name_from_source: string; qty: number; source_file: string }[]): Promise<void> { return pgWritePlantStock(rows); }
+export async function writeLipStock(raw_uid: string, name_from_source: string, qty_on_hand: number, reserved_qty: number, free_qty: number, source: string): Promise<void> { return pgWriteLipStock(raw_uid, name_from_source, qty_on_hand, reserved_qty, free_qty, source); }
+export async function writeLipStockBatch(rows: { raw_uid: string; name_from_source: string; qty: number; source: string }[]): Promise<void> { return pgWriteLipStockBatch(rows); }
+export async function getStockSnapshots(warehouse: string): Promise<any[]> { return pgGetStockSnapshots(warehouse); }
+export async function deleteStockSnapshot(warehouse: string, date: string): Promise<number> { return pgDeleteStockSnapshot(warehouse, date); }
 
 // ============================================================================
-// Need Layer (TZ 3.8.2)
+// Need Layer
 // ============================================================================
 
 export async function getNeedList() { return pgGetNeedList(); }
@@ -243,7 +132,7 @@ export async function getNeedByRecipe(recipeUid: string) { return pgGetNeedByRec
 export async function getNeedBySku() { return pgGetNeedBySku(); }
 
 // ============================================================================
-// Aliases Layer (TZ 3.8.2)
+// Aliases Layer
 // ============================================================================
 
 export async function getAliases() { return pgGetAliases(); }
@@ -253,7 +142,7 @@ export async function deleteAlias(id: number) { return pgDeleteAlias(id); }
 export async function matchAlias(text: string) { return pgMatchAlias(text); }
 
 // ============================================================================
-// Analogs Layer (TZ 3.8.2)
+// Analogs Layer
 // ============================================================================
 
 export async function getAnalogs() { return pgGetAnalogs(); }
@@ -262,7 +151,7 @@ export async function addAnalog(sourceUid: string, analogUid: string) { return p
 export async function deleteAnalog(id: number) { return pgDeleteAnalog(id); }
 
 // ============================================================================
-// Excluded Layer (TZ 3.8.2)
+// Excluded Layer
 // ============================================================================
 
 export async function getExcluded() { return pgGetExcluded(); }
@@ -272,7 +161,7 @@ export async function isExcluded(text: string) { return pgIsExcluded(text); }
 export async function deleteExcluded(id: number) { return pgDeleteExcluded(id); }
 
 // ============================================================================
-// Unresolved Layer (TZ 3.8.2)
+// Unresolved Layer
 // ============================================================================
 
 export async function getUnresolved() { return pgGetUnresolved(); }
@@ -283,15 +172,13 @@ export async function resolveUnresolvedByText(text: string) { return pgResolveUn
 export async function deleteUnresolved(id: number) { return pgDeleteUnresolved(id); }
 
 // ============================================================================
-// matchBatch PG (TZ 3.8.3)
+// matchBatch
 // ============================================================================
 
-export async function matchBatch(names: string[]): Promise<Map<string, string | null>> {
-  return pgMatchBatch(names);
-}
+export async function matchBatch(names: string[]): Promise<Map<string, string | null>> { return pgMatchBatch(names); }
 
 // ============================================================================
-// LipBatches Layer (TZ 3.9.1)
+// LipBatches Layer
 // ============================================================================
 
 export async function getLipBatchesList() { return pgGetLipBatches(); }
@@ -301,7 +188,7 @@ export async function getLatestLipBatchStock() { return pgGetLatestLipBatchStock
 export async function filterKdSimilar(names: string[]) { return pgFilterKdSimilar(names); }
 
 // ============================================================================
-// RawMaterials CRUD (TZ 3.9.2)
+// RawMaterials CRUD
 // ============================================================================
 
 export async function addRawMaterial(data: { code: string; name: string; short_name?: string; unit?: string; category?: string; active?: boolean }) { return pgAddRawMaterial(data); }
@@ -310,22 +197,8 @@ export async function deleteRawMaterial(code: string) { return pgDeleteRawMateri
 export async function mergeRawMaterials(sourceUid: string, targetUid: string, rename?: { full_name?: string; short_name?: string }) { return pgMergeRawMaterials(sourceUid, targetUid, rename); }
 
 // ============================================================================
-// getLipStockList + Partial Archive (TZ 3.9.4)
+// getLipStockList + Partial Archive
 // ============================================================================
 
 export async function getLipStockList() { return pgGetLipStockList(); }
 export async function partialArchive(recipeUid: string, producedTons: number) { return pgPartialArchive(recipeUid, producedTons); }
-
-// Re-export sheets-only functions (NOT yet migrated to PG)
-export {
-  getUnresolvedQueue,
-  parseAliasRows,
-  readRange,
-  writeRange,
-  appendRows,
-  clearRange,
-} from "./sheetsService";
-
-export function getDataSource(): string {
-  return DATA_SOURCE;
-}
