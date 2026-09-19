@@ -998,3 +998,192 @@ export async function pgResolveUnresolvedByText(text: string) {
 export async function pgDeleteUnresolved(id: number) {
   await db.execute(sql`DELETE FROM unresolved_item WHERE id = ${id}`);
 }
+
+// ============================================================================
+// matchBatch PG (TZ 3.8.3) — Identical algorithm, PG data source
+// ============================================================================
+
+// --- Constants (copied from sheetsService.ts) ---
+
+const RU_TO_LAT: Record<string, string> = {
+  "й":"q","ц":"w","у":"e","к":"r","е":"t","н":"y","г":"u","ш":"i","щ":"o","з":"p",
+  "х":"[", "ъ":"]",
+  "ф":"a","ы":"s","в":"d","а":"f","п":"g","р":"h","о":"j","л":"k","д":"l","ж":";","э":'\'',
+  "я":"z","ч":"x","с":"c","м":"v","и":"b","т":"n","ь":"m","б":",","ю":".",
+  "ё":"`",
+};
+
+const CYR_TO_LAT: Record<string, string> = {
+  "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z",
+  "и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r",
+  "с":"s","т":"t","у":"u","ф":"f","х":"kh","ц":"ts","ч":"ch","ш":"sh",
+  "щ":"shch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
+};
+
+const DENY_TOKENS = new Set<string>([
+  "мешок", "мешки", "мешка", "мешков", "мешочек",
+  "тара", "упаковка", "упак", "уп", "фасовка", "фасованный",
+  "пакет", "пакеты", "коробка", "короб", "ящик", "ящ",
+  "ведро", "канистра", "бочка", "фляга", "флакон", "банка",
+  "биг", "бэг", "бег", "бигбэг", "бигбег", "паллета", "паллет", "поддон",
+  "мкр", "полипропиленовый", "пп",
+  "кг", "г", "гр", "грамм", "мг", "л", "мл", "т", "тн", "тонна", "тоннах",
+  "шт", "штук", "штука", "штуки", "ед", "нетто", "брутто", "около",
+]);
+
+const NUM_UNIT_RE = /^\d+([.,]\d+)?(кг|г|гр|мг|л|мл|т|тн|шт|%)?$/;
+
+// --- Helper functions (identical to sheetsService.ts) ---
+
+function normalizeRawName(s: string): string {
+  const lower = String(s).toLowerCase().trim();
+  return lower.split("").map(ch => RU_TO_LAT[ch] ?? ch).join("");
+}
+
+function translitSuffix(s: string): string {
+  return s.toLowerCase().split("").map(ch => CYR_TO_LAT[ch] ?? ch).join("");
+}
+
+function extractSuffixOriginal(s: string): string | null {
+  const lower = String(s).toLowerCase().trim();
+  const m = lower.match(/(?:витамин|вит|vitamin)\s+([a-zа-яё0-9]+)/i);
+  if (m) return m[1];
+  const tokens = lower.split(/\s+/);
+  const last = tokens[tokens.length - 1];
+  if (/^[a-zа-яё][0-9]*$/.test(last) && last.length <= 4) return last;
+  return null;
+}
+
+function significantTokens(s: string): string[] {
+  return String(s)
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9%]+/gi, " ")
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length >= 3 && !DENY_TOKENS.has(t) && !NUM_UNIT_RE.test(t));
+}
+
+function tokenMatchScore(aTokens: string[], bTokens: string[]): number {
+  if (!aTokens.length || !bTokens.length) return 0;
+  const aSet = new Set(aTokens);
+  const bSet = new Set(bTokens);
+  const shared = [...bSet].filter(t => aSet.has(t));
+  if (!shared.length) return 0;
+  const bSubsetOfA = [...bSet].every(t => aSet.has(t));
+  const aSubsetOfB = [...aSet].every(t => bSet.has(t));
+  if (!bSubsetOfA && !aSubsetOfB) return 0;
+  if (shared.length === 1 && shared[0].length < 5) return 0;
+  return shared.reduce((sum, t) => sum + t.length, 0) + shared.length;
+}
+
+function normExcl(s: string): string {
+  return String(s).toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+// --- PG matchBatch ---
+
+export async function pgMatchBatch(names: string[]): Promise<Map<string, string | null>> {
+  // Load data from PG (same data as Sheets, different source)
+  const [skuRows, aliasRows, excludedRows] = await Promise.all([
+    db.execute(sql`SELECT code, name, short_name FROM sku WHERE active = true`),
+    db.execute(sql`SELECT sa.alias, s.code FROM sku_alias sa JOIN sku s ON sa.sku_id = s.id`),
+    db.execute(sql`SELECT text FROM excluded_item`),
+  ]);
+
+  const materials = skuRows.rows.map((r: any) => ({
+    raw_uid: r.code,
+    full_name: r.name,
+    short_name: r.short_name || '',
+  }));
+
+  if (!materials.length) {
+    throw new Error('matchBatch: каталог сырья (PG sku) пуст');
+  }
+
+  // Build lookup structures (identical to sheetsService)
+  const byFullName = new Map(materials.map(m => [m.full_name.toLowerCase().trim(), m.raw_uid]));
+  const byShortName = new Map(materials.map(m => [m.short_name.toLowerCase().trim(), m.raw_uid]));
+  const byNormName = new Map(materials.map(m => [normalizeRawName(m.full_name), m.raw_uid]));
+  const byNormShort = new Map(materials.map(m => [normalizeRawName(m.short_name), m.raw_uid]));
+
+  // Aliases → canonical code
+  const byAlias = new Map<string, string>();
+  for (const row of aliasRows.rows) {
+    const alias = String(row.alias).toLowerCase().trim();
+    const code = String(row.code);
+    if (alias && code) byAlias.set(alias, code);
+  }
+
+  // Excluded set
+  const excludedSet = new Set<string>();
+  for (const row of excludedRows.rows) {
+    excludedSet.add(normExcl(String(row.text)));
+  }
+
+  // Pre-build token lists for fuzzy matching
+  const aliasTokenList = Array.from(byAlias.entries())
+    .map(([alias, uid]) => ({ uid, tokens: significantTokens(alias) }))
+    .filter(e => e.tokens.length > 0);
+  const materialTokenList = materials.map(m => ({
+    uid: m.raw_uid,
+    fullTokens: significantTokens(m.full_name),
+    shortTokens: significantTokens(m.short_name),
+  }));
+
+  // Match each name (identical algorithm to sheetsService)
+  const result = new Map<string, string | null>();
+  for (const name of names) {
+    // Skip excluded names
+    if (excludedSet.has(normExcl(name))) { result.set(name, null); continue; }
+
+    const n = name.toLowerCase().trim();
+    if (byFullName.has(n))  { result.set(name, byFullName.get(n)!);  continue; }
+    if (byShortName.has(n)) { result.set(name, byShortName.get(n)!); continue; }
+    if (byAlias.has(n))     { result.set(name, byAlias.get(n)!);     continue; }
+
+    // Normalized name (keyboard layout)
+    const nn = normalizeRawName(name);
+    if (byNormName.has(nn))  { result.set(name, byNormName.get(nn)!);  continue; }
+    if (byNormShort.has(nn)) { result.set(name, byNormShort.get(nn)!); continue; }
+
+    // Vitamin suffix check
+    const inputSuffix = extractSuffixOriginal(name);
+    if (inputSuffix) {
+      const inputIsVit = /(?:витамин|вит|vitamin)/i.test(name);
+      let suffixMatch: { uid: string } | null = null;
+      let suffixMismatch = false;
+      for (const m of materials) {
+        const candSuffix = extractSuffixOriginal(m.full_name) ?? extractSuffixOriginal(m.short_name);
+        if (!candSuffix) continue;
+        const candIsVit = /(?:витамин|вит|vitamin)/i.test(m.full_name);
+        if (inputIsVit && candIsVit) {
+          if (translitSuffix(candSuffix) === translitSuffix(inputSuffix) || candSuffix === inputSuffix) {
+            suffixMatch = { uid: m.raw_uid };
+          } else {
+            suffixMismatch = true;
+          }
+        }
+      }
+      if (suffixMatch) { result.set(name, suffixMatch.uid); continue; }
+      if (suffixMismatch) { result.set(name, null); continue; }
+    }
+
+    // Fuzzy matching
+    const nTokens = significantTokens(name);
+    if (!nTokens.length) { result.set(name, null); continue; }
+
+    let best: { uid: string; score: number } | null = null;
+    for (const e of aliasTokenList) {
+      const s = tokenMatchScore(nTokens, e.tokens);
+      if (s > 0 && (!best || s > best.score)) best = { uid: e.uid, score: s };
+    }
+    for (const m of materialTokenList) {
+      const sf = tokenMatchScore(nTokens, m.fullTokens);
+      if (sf > 0 && (!best || sf > best.score)) best = { uid: m.uid, score: sf };
+      const ss = tokenMatchScore(nTokens, m.shortTokens);
+      if (ss > 0 && (!best || ss > best.score)) best = { uid: m.uid, score: ss };
+    }
+    result.set(name, best ? best.uid : null);
+  }
+  return result;
+}

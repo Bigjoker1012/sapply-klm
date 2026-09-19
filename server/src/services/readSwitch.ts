@@ -58,6 +58,7 @@ import {
   pgResolveUnresolved,
   pgResolveUnresolvedByText,
   pgDeleteUnresolved,
+  pgMatchBatch,
 } from "./postgresSupplyService";
 
 import {
@@ -269,6 +270,14 @@ export async function addUnresolvedBatch(items: { text: string; source_type: str
 export async function resolveUnresolved(id: number) { return pgResolveUnresolved(id); }
 export async function resolveUnresolvedByText(text: string) { return pgResolveUnresolvedByText(text); }
 export async function deleteUnresolved(id: number) { return pgDeleteUnresolved(id); }
+
+// ============================================================================
+// matchBatch PG (TZ 3.8.3)
+// ============================================================================
+
+export async function matchBatch(names: string[]): Promise<Map<string, string | null>> {
+  return pgMatchBatch(names);
+}
 
 // Re-export sheets-only functions (NOT yet migrated to PG)
 export {
