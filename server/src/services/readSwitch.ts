@@ -13,6 +13,12 @@ import {
   getRecipeLines as pgGetRecipeLines,
   getNeedTotals as pgGetNeedTotals,
   getExcludedList as pgGetExcludedList,
+  getInboundList as pgGetInboundList,
+  getInboundTotals as pgGetInboundTotals,
+  addInbound as pgAddInbound,
+  updateInboundStatus as pgUpdateInboundStatus,
+  deleteInbound as pgDeleteInbound,
+  deleteInboundByMaterial as pgDeleteInboundByMaterial,
 } from "./postgresSupplyService";
 
 import {
@@ -23,6 +29,12 @@ import {
   getRecipeLines as sheetsGetRecipeLines,
   getNeedTotals as sheetsGetNeedTotals,
   getExcludedList as sheetsGetExcludedList,
+  getInboundList as sheetsGetInboundList,
+  getInboundTotals as sheetsGetInboundTotals,
+  addInbound as sheetsAddInbound,
+  updateInboundStatus as sheetsUpdateInboundStatus,
+  deleteInbound as sheetsDeleteInbound,
+  deleteInboundByMaterial as sheetsDeleteInboundByMaterial,
 } from "./sheetsService";
 
 const DATA_SOURCE = process.env.SUPPLY_DATA_SOURCE || "sheets";
@@ -63,10 +75,28 @@ export async function getExcludedList() {
   return isPG() ? pgGetExcludedList() : sheetsGetExcludedList();
 }
 
+export async function getInboundList() {
+  return isPG() ? pgGetInboundList() : sheetsGetInboundList();
+}
+
 export async function getInboundTotals(): Promise<Map<string, number>> {
-  // Inbound not yet migrated to PG - always use Sheets
-  const { getInboundTotals: sheetsGetInboundTotals } = await import("./sheetsService");
-  return sheetsGetInboundTotals();
+  return isPG() ? pgGetInboundTotals() : sheetsGetInboundTotals();
+}
+
+export async function addInbound(raw_uid: string, raw_name: string, qty: number, eta: string, destination: string, document: string): Promise<string> {
+  return isPG() ? pgAddInbound(raw_uid, raw_name, qty, eta, destination, document) : sheetsAddInbound(raw_uid, raw_name, qty, eta, destination, document);
+}
+
+export async function updateInboundStatus(id: string, status: string): Promise<void> {
+  return isPG() ? pgUpdateInboundStatus(id, status) : sheetsUpdateInboundStatus(id, status);
+}
+
+export async function deleteInbound(id: string): Promise<void> {
+  return isPG() ? pgDeleteInbound(id) : sheetsDeleteInbound(id);
+}
+
+export async function deleteInboundByMaterial(raw_uid: string): Promise<number> {
+  return isPG() ? pgDeleteInboundByMaterial(raw_uid) : sheetsDeleteInboundByMaterial(raw_uid);
 }
 
 // Re-export sheets-only functions (not yet migrated)

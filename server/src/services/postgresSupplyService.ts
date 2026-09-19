@@ -148,9 +148,97 @@ export async function getExcludedList() {
 }
 
 // ============================================================================
-// Inbound (not yet migrated - placeholder)
+// Inbound / Поставки в пути
 // ============================================================================
 
+export async function getInboundList() {
+  const result = await db.execute(sql`
+    SELECT i.id, s.code as raw_uid, s.name as raw_name, i.qty_kg, i.eta_date,
+           i.status, i.po_ref, w.code as warehouse_code
+    FROM in_transit i
+    JOIN sku s ON i.sku_id = s.id
+    JOIN warehouse w ON i.warehouse_id = w.id
+    WHERE i.status NOT IN ('received')
+    ORDER BY i.eta_date NULLS LAST
+  `);
+  return result.rows.map((r: any) => ({
+    id: String(r.id),
+    raw_uid: r.raw_uid,
+    raw_name: r.raw_name,
+    qty: r.qty_kg,
+    eta: r.eta_date || '',
+    destination: r.warehouse_code === 'LIPKOV' ? 'Липковская' : 'Полоцк',
+    status: r.status === 'in_transit' ? 'в пути' : r.status === 'at_supplier' ? 'ожидается' : r.status === 'customs' ? 'таможня' : r.status,
+    document: r.po_ref || '',
+  }));
+}
+
 export async function getInboundTotals(): Promise<Map<string, number>> {
-  return new Map<string, number>();
+  const result = await db.execute(sql`
+    SELECT s.code, SUM(i.qty_kg) as total
+    FROM in_transit i
+    JOIN sku s ON i.sku_id = s.id
+    WHERE i.status NOT IN ('received')
+    GROUP BY s.code
+  `);
+  const map = new Map<string, number>();
+  for (const row of result.rows) {
+    map.set(row.code as string, parseFloat(row.total as string) || 0);
+  }
+  return map;
+}
+
+export async function addInbound(raw_uid: string, raw_name: string, qty: number, eta: string, destination: string, document: string): Promise<string> {
+  // Find SKU
+  const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${raw_uid}`);
+  if (skuResult.rows.length === 0) throw new Error('SKU not found: ' + raw_uid);
+  const skuId = (skuResult.rows[0] as any).id;
+
+  // Find warehouse
+  const whCode = destination.toLowerCase().includes('липков') ? 'LIPKOV' : 'POLOTSK';
+  const whResult = await db.execute(sql`SELECT id FROM warehouse WHERE code = ${whCode}`);
+  const warehouseId = whResult.rows.length > 0 ? (whResult.rows[0] as any).id : 1;
+
+  // Default supplier
+  const supResult = await db.execute(sql`SELECT id FROM supplier LIMIT 1`);
+  const supplierId = supResult.rows.length > 0 ? (supResult.rows[0] as any).id : 1;
+
+  // Normalize ETA
+  let etaDate = eta;
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(eta)) {
+    const p = eta.split('.');
+    etaDate = p[2] + '-' + p[1] + '-' + p[0];
+  }
+
+  const result = await db.execute(sql`
+    INSERT INTO in_transit (sku_id, supplier_id, warehouse_id, qty_kg, eta_date, status, po_ref)
+    VALUES (${skuId}, ${supplierId}, ${warehouseId}, ${qty}, ${etaDate}, 'in_transit', ${document || null})
+    RETURNING id
+  `);
+
+  return String((result.rows[0] as any).id);
+}
+
+export async function updateInboundStatus(id: string, status: string): Promise<void> {
+  const statusMap: Record<string, string> = {
+    'в пути': 'in_transit',
+    'ожидается': 'at_supplier',
+    'таможня': 'customs',
+    'получено': 'received',
+    'удалено': 'received',
+  };
+  const pgStatus = statusMap[status] || status;
+  await db.execute(sql`UPDATE in_transit SET status = ${pgStatus} WHERE id = ${parseInt(id)}`);
+}
+
+export async function deleteInbound(id: string): Promise<void> {
+  await updateInboundStatus(id, 'удалено');
+}
+
+export async function deleteInboundByMaterial(raw_uid: string): Promise<number> {
+  const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${raw_uid}`);
+  if (skuResult.rows.length === 0) return 0;
+  const skuId = (skuResult.rows[0] as any).id;
+  const result = await db.execute(sql`UPDATE in_transit SET status = 'received' WHERE sku_id = ${skuId} AND status NOT IN ('received')`);
+  return (result as any).rowCount || 0;
 }
