@@ -84,11 +84,5 @@ export async function bootstrap(): Promise<void> {
   // Сид каталога SKU из коммитнутого JSON-снимка. В проде каталог надо наполнить
   // при первом старте. Идемпотентно. Ошибка сида не должна ронять сервер —
   // логируем и продолжаем.
-  try {
-    const { runCatalogSeed } = await import("../scripts/seed-catalog");
-    const r = await runCatalogSeed();
-    console.log(`[seed] catalog: sku inserted ${r.inserted}, skipped ${r.skipped} (supplier placeholder id=${r.supplierId})`);
-  } catch (err) {
-    console.warn("[seed] catalog seed пропущен (не критично для старта):", (err as Error).message);
-  }
+  // seed-catalog removed in TZ 3.9.6 (Google Sheets dependency)
 }
