@@ -7,7 +7,7 @@ import {
   getExcluded, addExcludedBatch as addExcludedBatchPG,
   writePlantStock, writeLipStockBatch,
 } from "../services/readSwitch";
-import { readRange, parseAliasRows } from "../services/sheetsService";
+
 import { suggestMatches } from "../services/aiMatcher";
 
 const router = Router();
@@ -16,18 +16,18 @@ router.use(requireAuth);
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const [aliasRows, materials] = await Promise.all([
-      readRange("Aliases", "A2:D5000"),
+      getAliases(),
       getAllRawMaterials(),
     ]);
     const nameMap = new Map(materials.map(m => [m.raw_uid, m.full_name]));
-    const result = parseAliasRows(aliasRows, materials).map(a => ({
+    const result = aliasRows.map(a => ({
       id: a.id,
-      canonical_raw_uid: a.canonical_raw_uid,
-      name: a.canonical_raw_uid
-        ? (nameMap.get(a.canonical_raw_uid) || a.canonical_raw_uid)
+      canonical_raw_uid: a.raw_uid,
+      name: a.raw_uid
+        ? (nameMap.get(a.raw_uid) || a.raw_uid)
         : "(не привязано)",
-      resolved: a.resolved,
-      synonym: a.synonym,
+      resolved: !!a.raw_uid,
+      synonym: a.alias,
       source: a.source,
     }));
     res.json(result);
@@ -65,14 +65,12 @@ router.post("/", async (req: Request, res: Response) => {
 
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
-    const rows = await readRange("Aliases", "A2:D5000");
-    const idx = rows.findIndex(r => r[0] === req.params.id);
-    if (idx >= 0) {
-      // Mark as deleted by clearing the row
-      const { writeRange } = await import("../services/sheetsService");
-      await writeRange("Aliases", `A${idx + 2}:D${idx + 2}`, [["", "", "", ""]]);
-    }
-    res.json({ ok: true });
+    const { db } = await import("../db/client");
+    const { sql } = await import("drizzle-orm");
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const result = await db.execute(sql`DELETE FROM sku_alias WHERE id = ${id}`);
+    res.json({ ok: true, deleted: (result as any).rowCount || 0 });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

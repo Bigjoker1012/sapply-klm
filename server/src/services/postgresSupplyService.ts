@@ -1385,3 +1385,92 @@ export async function pgMergeRawMaterials(sourceUid: string, targetUid: string, 
   }
   return { plant, lip, lipBatches, inbound, need: needCount, aliases: aliasCount };
 }
+
+// ============================================================================
+// getLipStockList PG (TZ 3.9.4)
+// ============================================================================
+
+export async function pgGetLipStockList() {
+  const result = await db.execute(sql`
+    SELECT s.code as raw_uid, s.name as name_from_source, s.short_name,
+           l.qty_kg, l.unit, l.source, l.expiry_date, l.manufacture_date, l.snapshot_date
+    FROM lip_batch l
+    JOIN sku s ON l.sku_id = s.id
+    WHERE l.snapshot_date = (SELECT MAX(snapshot_date) FROM lip_batch)
+    ORDER BY s.code
+  `);
+  return result.rows.map((r: any) => ({
+    snapshot_date: r.snapshot_date,
+    raw_uid: r.raw_uid,
+    name_from_source: r.name_from_source,
+    qty_on_hand: r.qty_kg,
+    reserved_qty: 0,
+    free_qty: r.qty_kg,
+    unit: r.unit || 'кг',
+    source: r.source || 'kd_file',
+    expiry_date: r.expiry_date,
+    manufacture_date: r.manufacture_date,
+  }));
+}
+
+// ============================================================================
+// Partial Archive PG (TZ 3.9.4)
+// ============================================================================
+
+export async function pgPartialArchive(recipeUid: string, producedTons: number) {
+  const recResult = await db.execute(sql`SELECT id, batch_t, base_batch_kg, status FROM recipe WHERE recipe_uid = ${recipeUid}`);
+  if (recResult.rows.length === 0) throw new Error('Recipe not found');
+  const rec = recResult.rows[0] as any;
+  if (rec.status === 'archived') throw new Error('Already archived');
+
+  const originalTons = rec.batch_t || 1;
+  const recipeId = rec.id;
+  const factor = producedTons / originalTons;
+
+  await db.execute(sql`BEGIN`);
+  try {
+    // 1. Scale recipe_items for the current recipe
+    await db.execute(sql`UPDATE recipe_item SET consumption_kg = ROUND((consumption_kg * ${factor})::numeric, 2) WHERE recipe_id = ${recipeId} AND consumption_kg > 0`);
+
+    // 2. Update batch_t and base_batch_kg on current recipe
+    await db.execute(sql`UPDATE recipe SET batch_t = ${producedTons}, base_batch_kg = ${producedTons * 1000} WHERE id = ${recipeId}`);
+
+    // 3. Recalculate need for this recipe
+    await db.execute(sql`DELETE FROM need WHERE recipe_id = ${recipeId}`);
+    const items = await db.execute(sql`SELECT sku_id, consumption_kg FROM recipe_item WHERE recipe_id = ${recipeId} AND consumption_kg > 0`);
+    const period = new Date().toISOString().slice(0, 7);
+    for (const item of items.rows) {
+      await db.execute(sql`INSERT INTO need (recipe_id, sku_id, period, net_qty, deducted, net_remaining, calculated_at) VALUES (${recipeId}, ${(item as any).sku_id}, ${period}, ${(item as any).consumption_kg}, 0, ${(item as any).consumption_kg}, ${new Date().toISOString()})`);
+    }
+
+    // 4. Archive the current recipe
+    await db.execute(sql`UPDATE recipe SET status = 'archived' WHERE id = ${recipeId}`);
+
+    // 5. If there's remainder, create a new recipe
+    const remaining = originalTons - producedTons;
+    let newRecipeUid: string | null = null;
+    if (remaining > 0.001) {
+      const newRecResult = await db.execute(sql`INSERT INTO recipe (recipe_uid, code, name, status, batch_t, base_batch_kg, active_from) VALUES (${recipeUid + '_remaining_' + Date.now()}, (SELECT code FROM recipe WHERE id = ${recipeId}), (SELECT name FROM recipe WHERE id = ${recipeId}), 'active', ${remaining}, ${remaining * 1000}, ${new Date().toISOString().split('T')[0]}) RETURNING recipe_uid`);
+      newRecipeUid = (newRecResult.rows[0] as any).recipe_uid;
+      const newRecipeId = (newRecResult.rows[0] as any).id;
+
+      // Copy recipe_items with remaining factor
+      const remainFactor = 1 - factor;
+      const allItems = await db.execute(sql`SELECT sku_id, dose_kg_per_t, norm_g_per_t, consumption_kg, match_status FROM recipe_item WHERE recipe_id = ${recipeId}`);
+      const newPeriod = new Date().toISOString().slice(0, 7);
+      for (const item of allItems.rows) {
+        const newCons = round2(((item as any).consumption_kg || 0) * remainFactor);
+        if (newCons > 0) {
+          await db.execute(sql`INSERT INTO recipe_item (recipe_id, sku_id, dose_kg_per_t, norm_g_per_t, consumption_kg, match_status) VALUES (${newRecipeId}, ${(item as any).sku_id}, ${(item as any).dose_kg_per_t || 0}, ${(item as any).norm_g_per_t || 0}, ${newCons}, ${(item as any).match_status || 'matched'})`);
+          await db.execute(sql`INSERT INTO need (recipe_id, sku_id, period, net_qty, deducted, net_remaining, calculated_at) VALUES (${newRecipeId}, ${(item as any).sku_id}, ${newPeriod}, ${newCons}, 0, ${newCons}, ${new Date().toISOString()})`);
+        }
+      }
+    }
+
+    await db.execute(sql`COMMIT`);
+    return { found: true, originalTons, producedTons, remainingTons: remaining, newRecipeUid };
+  } catch (e) {
+    await db.execute(sql`ROLLBACK`);
+    throw e;
+  }
+}

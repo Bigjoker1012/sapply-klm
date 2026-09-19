@@ -1,8 +1,8 @@
-import { findRawByAlias, addToReviewQueue, addAlias } from "./sheetsService";
+import { matchAlias, addUnresolved, addAlias } from "./readSwitch";
 
 export async function findRawMaterialBySynonym(synonym: string): Promise<string | null> {
   if (!synonym || !synonym.trim()) return null;
-  return findRawByAlias(synonym);
+  return matchAlias(synonym);
 }
 
 export async function addToUnmatchedQueue(
@@ -10,7 +10,7 @@ export async function addToUnmatchedQueue(
   sourceType: string,
   fileName: string
 ): Promise<void> {
-  await addToReviewQueue(originalText, sourceType, fileName);
+  await addUnresolved(originalText, sourceType, fileName, 0, "");
 }
 
 export async function addSynonymByUid(rawUid: string, synonym: string, source: string): Promise<void> {

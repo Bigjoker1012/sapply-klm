@@ -22,9 +22,9 @@ import {
   getRecipesList, getRecipeLines,
   setRecipeStatusPG, deleteNeedByRecipePG, deleteRecipePG, deleteRecipesBulkPG,
   writeNeedFromRecipePG, updateRecipeTonsPG, rewriteRecipeItemsPG,
+  partialArchive as pgPartialArchive,
   PG_RECIPE_STATUSES, getDataSource,
 } from "../services/readSwitch";
-import { readRange, writeRange } from "../services/sheetsService";
 import { withStockMutation } from "../services/stockMutex";
 
 
@@ -196,89 +196,14 @@ router.post("/:uid/partial-archive", async (req: Request, res: Response) => {
         return { kind: "fullArchive" as const, found };
       }
 
-      // 2. Частичная выработка: пересчитываем RecipeLines пропорционально
-      const factor = produced / originalTons;
-      const lines = await getRecipeLines(req.params.uid);
-      const producedLines = lines.map(l => ({
-        ...l,
-        consumption_kg: l.consumption_kg ? l.consumption_kg * factor : l.consumption_kg,
-      }));
-
-      // 3. Удаляем старые Need, записываем Need для выработанного количества
-      await deleteNeedByRecipePG(req.params.uid);
-      const needLines = producedLines
-        .filter(l => l.raw_uid && l.match_status === "matched" && (l.consumption_kg || 0) > 0)
-        .map(l => ({ raw_uid: l.raw_uid as string, net_qty: l.consumption_kg as number }));
-      if (needLines.length) await writeNeedFromRecipePG(req.params.uid, needLines);
-
-      // 4. Архивируем текущий рецепт с уменьшенным batch_t
-      await setRecipeStatusPG(req.params.uid, PG_RECIPE_STATUSES.ARCHIVED);
-      // Обновляем batch_t и RecipeLines в архивном рецепте
-      const { writeRange } = await import("../services/sheetsService");
-      const allRecipes = await readRange("Recipes", "A2:M5000");
-      for (let i = 0; i < allRecipes.length; i++) {
-        if (String(allRecipes[i][0]) === req.params.uid) {
-          await writeRange("Recipes", `G${i + 2}:G${i + 2}`, [[produced]]);
-          await writeRange("Recipes", `M${i + 2}:M${i + 2}`, [[produced * 1000]]);
-          break;
-        }
-      }
-      // Обновляем RecipeLines архивного рецепта
-      const allLines = await readRange("RecipeLines", "A2:L5000");
-      for (let i = 0; i < allLines.length; i++) {
-        if (String(allLines[i][1]) === req.params.uid) {
-          const pl = producedLines.find(p => p.raw_uid === String(allLines[i][2]));
-          if (pl) {
-            allLines[i][7] = pl.consumption_kg || 0;
-          }
-        }
-      }
-      await writeRange("RecipeLines", `A2:L${allLines.length + 1}`, allLines);
-
-      // 5. Если есть остаток — создаём новый рецепт
-      const remaining = originalTons - produced;
-      let newRecipeUid: string | null = null;
-      if (remaining > 0.001) {
-        const { writeRecipe, writeRecipeLines } = await import("../services/sheetsService");
-        newRecipeUid = await writeRecipe({
-          code: rec.code,
-          full_name: rec.full_name,
-          premix_name: rec.premix_name || rec.full_name,
-          date: new Date().toISOString().slice(0, 10),
-          concentration: 0,
-          batch_t: remaining,
-          customer: rec.customer || "",
-          period: new Date().toISOString().slice(0, 7),
-          quarter: `${Math.ceil((new Date().getMonth() + 1) / 3)}_квартал`,
-          file_name: `остаток из ${rec.recipe_uid}`,
-          base_batch_kg: remaining * 1000,
-        });
-
-        // Копируем RecipeLines с оставшимся количеством
-        const remainingLines = lines.map(l => ({
-          raw_uid: l.raw_uid || "",
-          name_from_recipe: l.name_from_recipe || "",
-          activity: l.activity || "",
-          input_pct: l.input_pct || 0,
-          norm_g_per_t: l.norm_g_per_t || 0,
-          consumption_kg: l.consumption_kg ? l.consumption_kg * (1 - factor) : 0,
-          match_status: l.match_status || "",
-        }));
-        await writeRecipeLines(newRecipeUid, remainingLines);
-
-        // Записываем Need для нового рецепта (остаток)
-        const remainingNeed = remainingLines
-          .filter(l => l.raw_uid && l.match_status === "matched" && l.consumption_kg > 0)
-          .map(l => ({ raw_uid: l.raw_uid, net_qty: l.consumption_kg }));
-        if (remainingNeed.length) await writeNeedFromRecipePG(newRecipeUid, remainingNeed);
-      }
-
+      // Use PG partialArchive transaction
+      const paResult = await pgPartialArchive(req.params.uid, produced);
       return {
         kind: "partialArchive" as const,
-        originalTons,
-        producedTons: produced,
-        remainingTons: remaining,
-        newRecipeUid,
+        originalTons: paResult.originalTons,
+        producedTons: paResult.producedTons,
+        remainingTons: paResult.remainingTons,
+        newRecipeUid: paResult.newRecipeUid,
       };
     });
 

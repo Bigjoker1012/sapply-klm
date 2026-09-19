@@ -1,9 +1,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import multer from "multer";
-import {
-  matchBatch,
-} from "../services/sheetsService";
+import { matchBatch } from "../services/readSwitch";
 import { writeLipBatchesBulk, filterKdSimilar } from "../services/readSwitch";
 import {
   getExcludedList as getExcludedPG, addExcludedBatch as addExcludedBatchPG,

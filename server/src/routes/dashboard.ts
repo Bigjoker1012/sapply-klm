@@ -20,7 +20,7 @@ import { db } from "../db/client";
 import { requireAuth } from "../auth/middleware";
 import {
   getInboundList,
-} from "../services/sheetsService";
+} from "../services/readSwitch";
 import { computePlanningRows, PlanningStatus } from "../services/planningStatus";
 
 const router = Router();

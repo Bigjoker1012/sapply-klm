@@ -68,6 +68,8 @@ import {
   pgUpdateRawMaterial,
   pgDeleteRawMaterial,
   pgMergeRawMaterials,
+  pgGetLipStockList,
+  pgPartialArchive,
 } from "./postgresSupplyService";
 
 import {
@@ -306,6 +308,13 @@ export async function addRawMaterial(data: { code: string; name: string; short_n
 export async function updateRawMaterial(code: string, data: { name?: string; short_name?: string; unit?: string; active?: boolean; category?: string }) { return pgUpdateRawMaterial(code, data); }
 export async function deleteRawMaterial(code: string) { return pgDeleteRawMaterial(code); }
 export async function mergeRawMaterials(sourceUid: string, targetUid: string, rename?: { full_name?: string; short_name?: string }) { return pgMergeRawMaterials(sourceUid, targetUid, rename); }
+
+// ============================================================================
+// getLipStockList + Partial Archive (TZ 3.9.4)
+// ============================================================================
+
+export async function getLipStockList() { return pgGetLipStockList(); }
+export async function partialArchive(recipeUid: string, producedTons: number) { return pgPartialArchive(recipeUid, producedTons); }
 
 // Re-export sheets-only functions (NOT yet migrated to PG)
 export {

@@ -4,7 +4,7 @@ import { getLatestPlantStock, getAllRawMaterials } from "../services/readSwitch"
 import { writeLipStock } from "../services/readSwitch";
 import { getAnalogs, addAnalog, deleteAnalog } from "../services/readSwitch";
 import { getLipBatchesList } from "../services/readSwitch";
-import { getLipStockList } from "../services/sheetsService";
+import { getLipStockList } from "../services/readSwitch";
 
 const router = Router();
 router.use(requireAuth);
