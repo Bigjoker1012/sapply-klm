@@ -1,7 +1,13 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import { getAllRawMaterials } from "../services/readSwitch";
-import { readRange, parseAliasRows, getUnresolvedQueue, resolveQueueItem, addAlias, writePlantStock, writeLipStockBatch } from "../services/sheetsService";
+import {
+  getAliases, addAlias as addAliasPG, deleteAlias, matchAlias,
+  getUnresolved, resolveUnresolved, resolveUnresolvedByText, addUnresolved, addUnresolvedBatch,
+  getExcluded, addExcludedBatch as addExcludedBatchPG,
+  writePlantStock, writeLipStockBatch,
+} from "../services/readSwitch";
+import { readRange, parseAliasRows } from "../services/sheetsService";
 import { suggestMatches } from "../services/aiMatcher";
 
 const router = Router();
@@ -34,11 +40,11 @@ router.post("/", async (req: Request, res: Response) => {
   const { rawMaterialId, raw_uid, synonym, source } = req.body;
   try {
     const uid = raw_uid || rawMaterialId;
-    await addAlias(uid, synonym, source || "manual");
+    await addAliasPG(uid, synonym, source || "manual");
     // Если синоним совпадает с текстом в очереди — записываем остаток
     if (uid && synonym) {
-      const queue = await getUnresolvedQueue();
-      const match = queue.find(q => q.original_text === synonym);
+      const queue = await getUnresolved();
+      const match = queue.find(q => q.text === synonym);
       if (match && match.qty > 0) {
         const sourceType = match.source_warehouse || "polotsk";
         const stockRow = { raw_uid: uid, name_from_source: synonym, qty: match.qty, source_file: "synonym_confirm" };
@@ -48,7 +54,7 @@ router.post("/", async (req: Request, res: Response) => {
           await writeLipStockBatch([{ ...stockRow, source: "synonym_confirm" }]);
         }
         // Помечаем очередь как обработанную
-        if (match.id) await resolveQueueItem(match.id);
+        if (match.id) await resolveUnresolved(match.id);
       }
     }
     res.json({ ok: true });
@@ -74,7 +80,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
 
 router.get("/unmatched", async (_req: Request, res: Response) => {
   try {
-    const items = await getUnresolvedQueue();
+    const items = await getUnresolved();
     res.json(items);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -85,9 +91,10 @@ router.post("/confirm", async (req: Request, res: Response) => {
   const { queueId, rawMaterialId, raw_uid, synonym } = req.body;
   try {
     const uid = raw_uid || rawMaterialId;
-    if (synonym) await addAlias(uid, synonym, "manual");
+    if (synonym) await addAliasPG(uid, synonym, "manual");
     if (queueId) {
-      const queueItem = await resolveQueueItem(queueId);
+      const queueItem = await (await import("../services/readSwitch")).getUnresolved().then(items => items.find((i: any) => i.id === queueId));
+      if (queueItem) await (await import("../services/readSwitch")).resolveUnresolved(queueId);
       // Если в очереди было количество и склад — записываем остаток
       if (queueItem && queueItem.qty > 0 && uid) {
         const sourceType = queueItem.source_warehouse || "polotsk";

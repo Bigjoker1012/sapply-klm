@@ -765,3 +765,236 @@ export async function pgDeleteStockSnapshot(warehouse: string, date: string): Pr
   const result = await db.execute(sql`DELETE FROM stock_snapshot WHERE warehouse_id = ${whId} AND snapshot_date = ${date}`);
   return (result as any).rowCount || 0;
 }
+
+// ============================================================================
+// Need Layer (TZ 3.8.2)
+// ============================================================================
+
+/** Get need aggregated by SKU (used by planning/dashboard) */
+export async function pgGetNeedList() {
+  const result = await db.execute(sql`
+    SELECT s.code, s.name, n.net_qty, n.period, r.code as recipe_code, r.status
+    FROM need n
+    JOIN sku s ON n.sku_id = s.id
+    JOIN recipe r ON n.recipe_id = r.id
+    WHERE r.status = 'active'
+    ORDER BY s.code
+  `);
+  return result.rows.map((r: any) => ({
+    raw_uid: r.code, name: r.name, net_qty: r.net_qty,
+    period: r.period, recipe_code: r.recipe_code, status: r.status,
+  }));
+}
+
+/** Get need by recipe */
+export async function pgGetNeedByRecipe(recipeUid: string) {
+  const result = await db.execute(sql`
+    SELECT s.code, n.net_qty, n.period
+    FROM need n
+    JOIN sku s ON n.sku_id = s.id
+    JOIN recipe r ON n.recipe_id = r.id
+    WHERE r.recipe_uid = ${recipeUid}
+  `);
+  return result.rows.map((r: any) => ({ raw_uid: r.code, net_qty: r.net_qty, period: r.period }));
+}
+
+/** Get need aggregated by SKU for active recipes only */
+export async function pgGetNeedBySku() {
+  const result = await db.execute(sql`
+    SELECT s.code, SUM(n.net_qty) as total
+    FROM need n
+    JOIN sku s ON n.sku_id = s.id
+    JOIN recipe r ON n.recipe_id = r.id
+    WHERE r.status = 'active'
+    GROUP BY s.code
+  `);
+  const map = new Map<string, number>();
+  for (const row of result.rows) map.set(row.code as string, parseFloat(row.total as string) || 0);
+  return map;
+}
+
+// ============================================================================
+// Aliases Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function pgGetAliases() {
+  const result = await db.execute(sql`
+    SELECT sa.id, sa.alias, sa.canonical_raw_uid, sa.source, s.code as sku_code, s.name as sku_name
+    FROM sku_alias sa
+    LEFT JOIN sku s ON sa.sku_id = s.id
+    ORDER BY sa.alias
+  `);
+  return result.rows.map((r: any) => ({
+    id: r.id, alias: r.alias, raw_uid: r.sku_code || r.canonical_raw_uid,
+    source: r.source, sku_name: r.sku_name || '',
+  }));
+}
+
+export async function pgGetAliasesBySku(rawUid: string) {
+  const result = await db.execute(sql`
+    SELECT sa.alias, sa.source FROM sku_alias sa
+    JOIN sku s ON sa.sku_id = s.id
+    WHERE s.code = ${rawUid}
+  `);
+  return result.rows.map((r: any) => ({ alias: r.alias, source: r.source }));
+}
+
+export async function pgAddAlias(rawUid: string, alias: string, source: string) {
+  const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${rawUid}`);
+  if (skuResult.rows.length === 0) throw new Error('SKU not found: ' + rawUid);
+  const skuId = (skuResult.rows[0] as any).id;
+  await db.execute(sql`
+    INSERT INTO sku_alias (sku_id, alias, canonical_raw_uid, source)
+    VALUES (${skuId}, ${alias}, ${rawUid}, ${source || 'manual'})
+    ON CONFLICT DO NOTHING
+  `);
+}
+
+export async function pgDeleteAlias(id: number) {
+  await db.execute(sql`DELETE FROM sku_alias WHERE id = ${id}`);
+}
+
+/** Match text against aliases (priority: full_name → short_name → alias → normalized) */
+export async function pgMatchAlias(text: string) {
+  const result = await db.execute(sql`
+    SELECT s.code, sa.alias, sa.source
+    FROM sku_alias sa
+    JOIN sku s ON sa.sku_id = s.id
+    WHERE LOWER(sa.alias) = LOWER(${text})
+    LIMIT 1
+  `);
+  if (result.rows.length > 0) return (result.rows[0] as any).code;
+  // Try normalized match
+  const norm = text.toLowerCase().replace(/[^а-яёa-z0-9]/g, '');
+  const normResult = await db.execute(sql`
+    SELECT s.code FROM sku_alias sa
+    JOIN sku s ON sa.sku_id = s.id
+    WHERE LOWER(REPLACE(sa.alias, ' ', '')) = ${norm}
+    LIMIT 1
+  `);
+  if (normResult.rows.length > 0) return (normResult.rows[0] as any).code;
+  return null;
+}
+
+// ============================================================================
+// Analogs Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function pgGetAnalogs() {
+  const result = await db.execute(sql`
+    SELECT a.id, s1.code as source_code, s1.name as source_name,
+           s2.code as analog_code, s2.name as analog_name
+    FROM analog a
+    JOIN sku s1 ON a.sku_id = s1.id
+    JOIN sku s2 ON a.analog_sku_id = s2.id
+  `);
+  return result.rows.map((r: any) => ({
+    id: r.id, source_raw_uid: r.source_code, source_name: r.source_name,
+    analog_raw_uid: r.analog_code, analog_name: r.analog_name,
+  }));
+}
+
+export async function pgGetAnalogsBySku(rawUid: string) {
+  const result = await db.execute(sql`
+    SELECT s2.code, s2.name FROM analog a
+    JOIN sku s1 ON a.sku_id = s1.id
+    JOIN sku s2 ON a.analog_sku_id = s2.id
+    WHERE s1.code = ${rawUid}
+  `);
+  return result.rows.map((r: any) => ({ raw_uid: r.code, name: r.name }));
+}
+
+export async function pgAddAnalog(sourceUid: string, analogUid: string) {
+  const src = await db.execute(sql`SELECT id FROM sku WHERE code = ${sourceUid}`);
+  const ana = await db.execute(sql`SELECT id FROM sku WHERE code = ${analogUid}`);
+  if (src.rows.length === 0) throw new Error('Source SKU not found: ' + sourceUid);
+  if (ana.rows.length === 0) throw new Error('Analog SKU not found: ' + analogUid);
+  await db.execute(sql`
+    INSERT INTO analog (sku_id, analog_sku_id) VALUES (${(src.rows[0] as any).id}, ${(ana.rows[0] as any).id})
+    ON CONFLICT DO NOTHING
+  `);
+}
+
+export async function pgDeleteAnalog(id: number) {
+  await db.execute(sql`DELETE FROM analog WHERE id = ${id}`);
+}
+
+// ============================================================================
+// Excluded Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function pgGetExcluded() {
+  const result = await db.execute(sql`SELECT id, text, source_type FROM excluded_item ORDER BY text`);
+  return result.rows.map((r: any) => ({ id: r.id, text: r.text, source_type: r.source_type }));
+}
+
+export async function pgAddExcluded(text: string, sourceType: string) {
+  await db.execute(sql`
+    INSERT INTO excluded_item (text, source_type) VALUES (${text}, ${sourceType || 'manual'})
+    ON CONFLICT DO NOTHING
+  `);
+}
+
+export async function pgAddExcludedBatch(items: { text: string; source_type: string }[]) {
+  for (const item of items) {
+    await db.execute(sql`
+      INSERT INTO excluded_item (text, source_type) VALUES (${item.text}, ${item.source_type || 'upload'})
+      ON CONFLICT DO NOTHING
+    `);
+  }
+}
+
+export async function pgIsExcluded(text: string) {
+  const result = await db.execute(sql`SELECT 1 FROM excluded_item WHERE LOWER(text) = LOWER(${text}) LIMIT 1`);
+  return result.rows.length > 0;
+}
+
+export async function pgDeleteExcluded(id: number) {
+  await db.execute(sql`DELETE FROM excluded_item WHERE id = ${id}`);
+}
+
+// ============================================================================
+// Unresolved / ReviewQueue Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function pgGetUnresolved() {
+  const result = await db.execute(sql`
+    SELECT id, text, source_type, file_name, qty, source_warehouse, resolved, created_at
+    FROM unresolved_item
+    WHERE resolved = false
+    ORDER BY created_at DESC
+  `);
+  return result.rows.map((r: any) => ({
+    id: r.id, text: r.text, source_type: r.source_type,
+    file_name: r.file_name, qty: r.qty, source_warehouse: r.source_warehouse,
+    resolved: r.resolved, created_at: r.created_at,
+  }));
+}
+
+export async function pgAddUnresolved(text: string, sourceType: string, fileName: string, qty: number, warehouse: string) {
+  await db.execute(sql`
+    INSERT INTO unresolved_item (text, source_type, file_name, qty, source_warehouse, resolved)
+    VALUES (${text}, ${sourceType}, ${fileName || ''}, ${qty || 0}, ${warehouse || ''}, false)
+  `);
+}
+
+export async function pgAddUnresolvedBatch(items: { text: string; source_type: string; file_name: string; qty: number; source_warehouse: string }[]) {
+  for (const item of items) {
+    await db.execute(sql`
+      INSERT INTO unresolved_item (text, source_type, file_name, qty, source_warehouse, resolved)
+      VALUES (${item.text}, ${item.source_type || 'upload'}, ${item.file_name || ''}, ${item.qty || 0}, ${item.source_warehouse || ''}, false)
+    `);
+  }
+}
+
+export async function pgResolveUnresolved(id: number) {
+  await db.execute(sql`UPDATE unresolved_item SET resolved = true, resolved_at = ${new Date().toISOString()} WHERE id = ${id}`);
+}
+
+export async function pgResolveUnresolvedByText(text: string) {
+  await db.execute(sql`UPDATE unresolved_item SET resolved = true, resolved_at = ${new Date().toISOString()} WHERE text = ${text} AND resolved = false`);
+}
+
+export async function pgDeleteUnresolved(id: number) {
+  await db.execute(sql`DELETE FROM unresolved_item WHERE id = ${id}`);
+}

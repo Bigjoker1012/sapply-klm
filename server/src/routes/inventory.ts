@@ -2,7 +2,8 @@ import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import { getLatestPlantStock, getAllRawMaterials } from "../services/readSwitch";
 import { writeLipStock } from "../services/readSwitch";
-import { getLipStockList, getLipBatchesList, getAnalogs, addAnalog, deleteAnalog } from "../services/sheetsService";
+import { getAnalogs, addAnalog, deleteAnalog } from "../services/readSwitch";
+import { getLipStockList, getLipBatchesList } from "../services/sheetsService";
 
 const router = Router();
 router.use(requireAuth);
@@ -72,7 +73,7 @@ router.post("/analogs", async (req: Request, res: Response) => {
   const { raw_uid, analog_raw_uid, note } = req.body;
   if (!raw_uid || !analog_raw_uid) return res.status(400).json({ error: "raw_uid и analog_raw_uid обязательны" });
   try {
-    await addAnalog(raw_uid, analog_raw_uid, note || "");
+    await addAnalog(raw_uid, analog_raw_uid);
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -81,7 +82,7 @@ router.post("/analogs", async (req: Request, res: Response) => {
 
 router.delete("/analogs/:id", async (req: Request, res: Response) => {
   try {
-    await deleteAnalog(req.params.id);
+    await deleteAnalog(parseInt(req.params.id));
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

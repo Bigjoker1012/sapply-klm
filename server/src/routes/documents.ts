@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { listDocuments, getDocument, decodeFileName, deleteDocument } from "../services/documentArchive";
-import { deleteNeedByRecipe } from "../services/sheetsService";
+import { deleteNeedByRecipePG as deleteNeedByRecipe } from "../services/readSwitch";
 import { requireAuth } from "../auth/middleware";
 
 const router = Router();

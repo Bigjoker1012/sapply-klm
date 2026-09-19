@@ -35,6 +35,29 @@ import {
   pgWriteLipStockBatch,
   pgGetStockSnapshots,
   pgDeleteStockSnapshot,
+  pgGetNeedList,
+  pgGetNeedByRecipe,
+  pgGetNeedBySku,
+  pgGetAliases,
+  pgGetAliasesBySku,
+  pgAddAlias,
+  pgDeleteAlias,
+  pgMatchAlias,
+  pgGetAnalogs,
+  pgGetAnalogsBySku,
+  pgAddAnalog,
+  pgDeleteAnalog,
+  pgGetExcluded,
+  pgAddExcluded,
+  pgAddExcludedBatch,
+  pgIsExcluded,
+  pgDeleteExcluded,
+  pgGetUnresolved,
+  pgAddUnresolved,
+  pgAddUnresolvedBatch,
+  pgResolveUnresolved,
+  pgResolveUnresolvedByText,
+  pgDeleteUnresolved,
 } from "./postgresSupplyService";
 
 import {
@@ -199,12 +222,58 @@ export async function deleteStockSnapshot(warehouse: string, date: string): Prom
   return pgDeleteStockSnapshot(warehouse, date);
 }
 
-// Re-export sheets-only functions (not yet migrated)
+// ============================================================================
+// Need Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function getNeedList() { return pgGetNeedList(); }
+export async function getNeedByRecipe(recipeUid: string) { return pgGetNeedByRecipe(recipeUid); }
+export async function getNeedBySku() { return pgGetNeedBySku(); }
+
+// ============================================================================
+// Aliases Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function getAliases() { return pgGetAliases(); }
+export async function getAliasesBySku(rawUid: string) { return pgGetAliasesBySku(rawUid); }
+export async function addAlias(rawUid: string, alias: string, source: string) { return pgAddAlias(rawUid, alias, source); }
+export async function deleteAlias(id: number) { return pgDeleteAlias(id); }
+export async function matchAlias(text: string) { return pgMatchAlias(text); }
+
+// ============================================================================
+// Analogs Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function getAnalogs() { return pgGetAnalogs(); }
+export async function getAnalogsBySku(rawUid: string) { return pgGetAnalogsBySku(rawUid); }
+export async function addAnalog(sourceUid: string, analogUid: string) { return pgAddAnalog(sourceUid, analogUid); }
+export async function deleteAnalog(id: number) { return pgDeleteAnalog(id); }
+
+// ============================================================================
+// Excluded Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function getExcluded() { return pgGetExcluded(); }
+export async function addExcluded(text: string, sourceType: string) { return pgAddExcluded(text, sourceType); }
+export async function addExcludedBatch(items: { text: string; source_type: string; file_name?: string; qty?: number; source_warehouse?: string }[]) { return pgAddExcludedBatch(items); }
+export async function isExcluded(text: string) { return pgIsExcluded(text); }
+export async function deleteExcluded(id: number) { return pgDeleteExcluded(id); }
+
+// ============================================================================
+// Unresolved Layer (TZ 3.8.2)
+// ============================================================================
+
+export async function getUnresolved() { return pgGetUnresolved(); }
+export async function addUnresolved(text: string, sourceType: string, fileName: string, qty: number, warehouse: string) { return pgAddUnresolved(text, sourceType, fileName, qty, warehouse); }
+export async function addUnresolvedBatch(items: { text: string; source_type: string; file_name: string; qty: number; source_warehouse: string }[]) { return pgAddUnresolvedBatch(items); }
+export async function resolveUnresolved(id: number) { return pgResolveUnresolved(id); }
+export async function resolveUnresolvedByText(text: string) { return pgResolveUnresolvedByText(text); }
+export async function deleteUnresolved(id: number) { return pgDeleteUnresolved(id); }
+
+// Re-export sheets-only functions (NOT yet migrated to PG)
 export {
   getLipBatchesList,
-  getAnalogs,
   getUnresolvedQueue,
-  matchBatch,
   parseAliasRows,
   readRange,
   writeRange,

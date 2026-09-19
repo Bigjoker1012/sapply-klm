@@ -2,11 +2,12 @@ import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
 import multer from "multer";
 import {
-  matchBatch, addToReviewQueueBatch,
-  writeLipBatchesBulk,
-  getUnresolvedQueue, resolveQueueItem, addAlias,
-  filterKdSimilar, getExcludedList, addExcludedBatch, resolveQueueByText,
+  matchBatch, writeLipBatchesBulk, filterKdSimilar,
 } from "../services/sheetsService";
+import {
+  getExcludedList as getExcludedPG, addExcludedBatch as addExcludedBatchPG,
+  getUnresolved as getUnresolvedPG, addUnresolvedBatch, resolveUnresolvedByText as resolveUnresolvedByTextPG,
+} from "../services/readSwitch";
 import {
   writePlantStock, writeLipStockBatch,
   writeRecipePG, writeNeedFromRecipePG,
@@ -74,7 +75,7 @@ router.post("/polotsk", upload.single("file"), async (req: Request, res: Respons
     // 2. Write stock + queue in parallel
     await Promise.all([
       stockRows.length ? writePlantStock(stockRows) : Promise.resolve(),
-      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+      queueItems.length ? addUnresolvedBatch(queueItems) : Promise.resolve(),
     ]);
 
     await saveDocument("polotsk", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
@@ -115,7 +116,7 @@ router.post("/lipkovskaya", upload.single("file"), async (req: Request, res: Res
     // 2. Write all in parallel
     await Promise.all([
       writeLipStockBatch(stockRows),
-      queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+      queueItems.length ? addUnresolvedBatch(queueItems) : Promise.resolve(),
     ]);
 
     await saveDocument("lipkovskaya", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
@@ -174,7 +175,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
     const lines: any[] = [];
     const needLines: { raw_uid: string; net_qty: number }[] = [];
     const newAliases: { raw_uid: string; alias: string; source: string }[] = [];
-    const queueItems: { text: string; source_type: string; file_name: string }[] = [];
+    const queueItems: { text: string; source_type: string; file_name: string; qty: number; source_warehouse: string }[] = [];
 
     for (const row of parsed.rows) {
       const isPlant = isPlantRow(row);
@@ -216,7 +217,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
         }
         matched++;
       } else {
-        queueItems.push({ text: row.rawName, source_type: "recipe", file_name: up.originalname });
+        queueItems.push({ text: row.rawName, source_type: "recipe", file_name: up.originalname, qty: 0, source_warehouse: "" });
         unmatched++;
       }
     }
@@ -249,7 +250,7 @@ router.post("/recipe", upload.single("file"), async (req: Request, res: Response
       });
 
       await Promise.all([
-        queueItems.length ? addToReviewQueueBatch(queueItems) : Promise.resolve(),
+        queueItems.length ? addUnresolvedBatch(queueItems) : Promise.resolve(),
       ]);
 
       if (needLines.length) await writeNeedFromRecipePG(recipeUid, needLines).catch(err => {
@@ -330,7 +331,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
     await Promise.all([
       writeLipBatchesBulk(batchRows),
       writeLipStockBatch(lipStockRows),
-            filteredQueue.length ? addToReviewQueueBatch(filteredQueue) : Promise.resolve(),
+            filteredQueue.length ? addUnresolvedBatch(filteredQueue) : Promise.resolve(),
     ]);
 
     await saveDocument("kd", { originalname: up.originalname, mimetype: up.mimetype, buffer: up.buffer });
@@ -354,7 +355,7 @@ router.post("/lipkovskaya-kd", upload.single("file"), async (req: Request, res: 
 
 router.get("/unmatched", async (_req: Request, res: Response) => {
   try {
-    res.json(await getUnresolvedQueue());
+    res.json(await getUnresolvedPG());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -364,8 +365,8 @@ router.post("/unmatched/confirm", async (req: Request, res: Response) => {
   const { queueId, rawMaterialId, raw_uid, synonym } = req.body;
   try {
     const uid = raw_uid || rawMaterialId;
-    if (uid && synonym) await addAlias(uid, synonym, "manual");
-    if (queueId) await resolveQueueItem(queueId);
+    if (uid && synonym) await (await import("../services/readSwitch")).addAlias(uid, synonym, "manual");
+    if (queueId) await await (await import("../services/readSwitch")).resolveUnresolved(queueId);
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -383,8 +384,8 @@ router.post("/unmatched/exclude", async (req: Request, res: Response) => {
     if (!text || !String(text).trim()) {
       return res.status(400).json({ error: "Не указан текст позиции" });
     }
-    await addExcludedBatch([{ text: String(text), source_type: "manual" }]);
-    await resolveQueueByText(String(text));
+    await addExcludedBatchPG([{ text: String(text), source_type: "manual", file_name: "", qty: 0, source_warehouse: "" }]);
+    await resolveUnresolvedByTextPG(String(text));
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -393,7 +394,7 @@ router.post("/unmatched/exclude", async (req: Request, res: Response) => {
 
 router.get("/excluded", async (_req: Request, res: Response) => {
   try {
-    res.json(await getExcludedList());
+    res.json(await getExcludedPG());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
