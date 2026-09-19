@@ -21,6 +21,15 @@ import {
   deleteInboundByMaterial as pgDeleteInboundByMaterial,
   getLiveStock as pgGetLiveStock,
   getStockDeficit as pgGetStockDeficit,
+  pgWriteRecipe,
+  pgSetRecipeStatus,
+  pgUpdateRecipeTons,
+  pgDeleteRecipe,
+  pgDeleteRecipesBulk,
+  pgDeleteNeedByRecipe,
+  pgWriteNeedFromRecipe,
+  pgRewriteRecipeItems,
+  PG_RECIPE_STATUSES,
 } from "./postgresSupplyService";
 
 import {
@@ -109,6 +118,51 @@ export async function getLiveStock() {
 
 export async function getStockDeficit() {
   return isPG() ? pgGetStockDeficit() : sheetsGetStockDeficit();
+}
+
+// ============================================================================
+// Recipe Write Layer (TZ 3.8)
+// ============================================================================
+
+export { PG_RECIPE_STATUSES };
+
+export async function writeRecipePG(recipe: {
+  code: string; full_name: string; premix_name: string; date: string;
+  batch_t: number; customer: string; file_name: string; base_batch_kg: number;
+  lines: { raw_uid: string; name_from_recipe: string; input_pct: number;
+           norm_g_per_t: number; consumption_kg: number; match_status: string; }[];
+}): Promise<string> {
+  return pgWriteRecipe(recipe);
+}
+
+export async function setRecipeStatusPG(recipeUid: string, status: string): Promise<boolean> {
+  return pgSetRecipeStatus(recipeUid, status);
+}
+
+export async function updateRecipeTonsPG(recipeUid: string, newTons: number) {
+  return pgUpdateRecipeTons(recipeUid, newTons);
+}
+
+export async function deleteRecipePG(recipeUid: string): Promise<number> {
+  return pgDeleteRecipe(recipeUid);
+}
+
+export async function deleteRecipesBulkPG(recipeUids: string[]): Promise<number> {
+  return pgDeleteRecipesBulk(recipeUids);
+}
+
+export async function deleteNeedByRecipePG(recipeUid: string): Promise<number> {
+  return pgDeleteNeedByRecipe(recipeUid);
+}
+
+export async function writeNeedFromRecipePG(recipeUid: string, lines: { raw_uid: string; net_qty: number }[]): Promise<void> {
+  return pgWriteNeedFromRecipe(recipeUid, lines);
+}
+
+export async function rewriteRecipeItemsPG(recipeUid: string, lines: {
+  raw_uid: string; consumption_kg: number; norm_g_per_t: number; match_status: string;
+}[]): Promise<void> {
+  return pgRewriteRecipeItems(recipeUid, lines);
 }
 
 // Re-export sheets-only functions (not yet migrated)

@@ -18,8 +18,13 @@
  */
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
-import { getRecipesList, getRecipeLines } from "../services/readSwitch";
-import { setRecipeStatus, deleteNeedByRecipe, deleteRecipe, deleteRecipesBulk, writeNeedFromRecipe, RECIPE_STATUS, STOCK_CONSUMING_STATUSES, readRange, writeRange, updateRecipeTons } from "../services/sheetsService";
+import {
+  getRecipesList, getRecipeLines,
+  setRecipeStatusPG, deleteNeedByRecipePG, deleteRecipePG, deleteRecipesBulkPG,
+  writeNeedFromRecipePG, updateRecipeTonsPG, rewriteRecipeItemsPG,
+  PG_RECIPE_STATUSES, getDataSource,
+} from "../services/readSwitch";
+import { readRange, writeRange } from "../services/sheetsService";
 import { withStockMutation } from "../services/stockMutex";
 
 
@@ -35,7 +40,7 @@ async function cleanupOldCancelled() {
       const toDelete = cancelled.slice(0, cancelled.length - MAX_CANCELLED);
       console.log(`[cleanup] Удаляю ${toDelete.length} старых отменённых рецептов (было ${cancelled.length}, оставляю ${MAX_CANCELLED})`);
       for (const r of toDelete) {
-        await deleteRecipe(r.recipe_uid);
+        await deleteRecipePG(r.recipe_uid);
       }
       console.log(`[cleanup] Удалено ${toDelete.length} рецептов`);
     }
@@ -69,9 +74,9 @@ router.get("/:uid/lines", async (req: Request, res: Response) => {
 
 /** Маппинг действия с фронта в целевой статус рецепта. */
 const ACTION_STATUS: Record<string, string> = {
-  plan: RECIPE_STATUS.PLAN,
-  archive: RECIPE_STATUS.ARCHIVED,
-  cancel: RECIPE_STATUS.CANCELLED,
+  plan: PG_RECIPE_STATUSES.PLAN,
+  archive: PG_RECIPE_STATUSES.ARCHIVED,
+  cancel: PG_RECIPE_STATUSES.CANCELLED,
 };
 
 /**
@@ -84,15 +89,15 @@ const ACTION_STATUS: Record<string, string> = {
  */
 async function transitionRecipe(uid: string, status: string): Promise<{ found: boolean }> {
   return withStockMutation(async () => {
-    const found = await setRecipeStatus(uid, status);
+    const found = await setRecipeStatusPG(uid, status);
     if (!found) return { found };
-    await deleteNeedByRecipe(uid);
-    if (STOCK_CONSUMING_STATUSES.has(status)) {
+    await deleteNeedByRecipePG(uid);
+    if (status === PG_RECIPE_STATUSES.PLAN) {
       const lines = await getRecipeLines(uid);
       const needLines = lines
         .filter(l => l.raw_uid && l.match_status === "matched" && l.consumption_kg > 0)
         .map(l => ({ raw_uid: l.raw_uid as string, net_qty: l.consumption_kg as number }));
-      if (needLines.length) await writeNeedFromRecipe(uid, needLines);
+      if (needLines.length) await writeNeedFromRecipePG(uid, needLines);
     }
     return { found };
   });
@@ -135,15 +140,15 @@ router.post("/:uid/tons", async (req: Request, res: Response) => {
       const recipes = await getRecipesList();
       const rec = recipes.find(r => r.recipe_uid === req.params.uid);
       if (!rec) return { kind: "notFound" as const };
-      if (rec.status === RECIPE_STATUS.CANCELLED) {
+      if (rec.status === PG_RECIPE_STATUSES.CANCELLED) {
         return { kind: "badStatus" as const, status: rec.status };
       }
 
       // Нехватка склада НЕ блокирует: остаток уходит в минус, сигнал к закупке
       // формируется на вкладке «Дефицит». Просто масштабируем расход и Need.
-      const upd = await updateRecipeTons(req.params.uid, tons);
-      await deleteNeedByRecipe(req.params.uid);
-      if (upd.needLines.length) await writeNeedFromRecipe(req.params.uid, upd.needLines);
+      const upd = await updateRecipeTonsPG(req.params.uid, tons);
+      await deleteNeedByRecipePG(req.params.uid);
+      if (upd.needLines.length) await writeNeedFromRecipePG(req.params.uid, upd.needLines);
       return { kind: "ok" as const, oldBatchT: upd.oldBatchT, newBatchT: tons };
     });
 
@@ -180,14 +185,14 @@ router.post("/:uid/partial-archive", async (req: Request, res: Response) => {
       const recipes = await getRecipesList();
       const rec = recipes.find(r => r.recipe_uid === req.params.uid);
       if (!rec) return { kind: "notFound" as const };
-      if (rec.status === RECIPE_STATUS.CANCELLED || rec.status === RECIPE_STATUS.ARCHIVED) {
+      if (rec.status === PG_RECIPE_STATUSES.CANCELLED || rec.status === PG_RECIPE_STATUSES.ARCHIVED) {
         return { kind: "badStatus" as const, status: rec.status };
       }
 
       const originalTons = rec.batch_t || 1;
       if (produced >= originalTons) {
         // Полная выработка — просто архивируем
-        const { found } = await transitionRecipe(req.params.uid, RECIPE_STATUS.ARCHIVED);
+        const { found } = await transitionRecipe(req.params.uid, PG_RECIPE_STATUSES.ARCHIVED);
         return { kind: "fullArchive" as const, found };
       }
 
@@ -200,14 +205,14 @@ router.post("/:uid/partial-archive", async (req: Request, res: Response) => {
       }));
 
       // 3. Удаляем старые Need, записываем Need для выработанного количества
-      await deleteNeedByRecipe(req.params.uid);
+      await deleteNeedByRecipePG(req.params.uid);
       const needLines = producedLines
         .filter(l => l.raw_uid && l.match_status === "matched" && (l.consumption_kg || 0) > 0)
         .map(l => ({ raw_uid: l.raw_uid as string, net_qty: l.consumption_kg as number }));
-      if (needLines.length) await writeNeedFromRecipe(req.params.uid, needLines);
+      if (needLines.length) await writeNeedFromRecipePG(req.params.uid, needLines);
 
       // 4. Архивируем текущий рецепт с уменьшенным batch_t
-      await setRecipeStatus(req.params.uid, RECIPE_STATUS.ARCHIVED);
+      await setRecipeStatusPG(req.params.uid, PG_RECIPE_STATUSES.ARCHIVED);
       // Обновляем batch_t и RecipeLines в архивном рецепте
       const { writeRange } = await import("../services/sheetsService");
       const allRecipes = await readRange("Recipes", "A2:M5000");
@@ -265,7 +270,7 @@ router.post("/:uid/partial-archive", async (req: Request, res: Response) => {
         const remainingNeed = remainingLines
           .filter(l => l.raw_uid && l.match_status === "matched" && l.consumption_kg > 0)
           .map(l => ({ raw_uid: l.raw_uid, net_qty: l.consumption_kg }));
-        if (remainingNeed.length) await writeNeedFromRecipe(newRecipeUid, remainingNeed);
+        if (remainingNeed.length) await writeNeedFromRecipePG(newRecipeUid, remainingNeed);
       }
 
       return {
@@ -326,7 +331,7 @@ router.post("/bulk/delete", async (req: Request, res: Response) => {
   const { uids } = req.body;
   if (!Array.isArray(uids) || !uids.length) return res.status(400).json({ error: "uids[] обязателен" });
   try {
-    const done = await deleteRecipesBulk(uids);
+    const done = await deleteRecipesBulkPG(uids);
     res.json({ ok: true, done });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -337,7 +342,7 @@ router.post("/bulk/delete", async (req: Request, res: Response) => {
 
 router.delete("/:uid", async (req: Request, res: Response) => {
   try {
-    const removed = await deleteRecipe(req.params.uid);
+    const removed = await deleteRecipePG(req.params.uid);
     res.json({ ok: true, removed });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

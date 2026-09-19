@@ -315,8 +315,285 @@ export async function getLiveStock() {
 }
 
 export async function getStockDeficit() {
-  // For now, deficit uses the same logic as liveStock plus per-recipe breakdown
   const live = await getLiveStock();
-  // Add empty contributors for now — full deficit breakdown requires recipe-level details
   return (live as any[]).map((item: any) => ({ ...item, contributors: [] }));
+}
+
+// ============================================================================
+// Recipe WRITE Layer (TZ 3.8)
+// ============================================================================
+
+/**
+ * Status mapping: Sheets → PG
+ *   план      → active   (consumes stock)
+ *   в работе  → active   (consumes stock)
+ *   активен   → active   (consumes stock, legacy)
+ *   архив     → archived (does NOT consume)
+ *   отменён   → archived (does NOT consume)
+ *   удалён   → archived (does NOT consume)
+ */
+export const PG_RECIPE_STATUSES = {
+  PLAN: 'active',
+  IN_WORK: 'active',
+  ARCHIVED: 'archived',
+  CANCELLED: 'archived',
+} as const;
+
+/** Create recipe + recipe_items + need in a single transaction */
+export async function pgWriteRecipe(recipe: {
+  code: string; full_name: string; premix_name: string; date: string;
+  batch_t: number; customer: string; file_name: string; base_batch_kg: number;
+  lines: { raw_uid: string; name_from_recipe: string; input_pct: number;
+           norm_g_per_t: number; consumption_kg: number; match_status: string; }[];
+}): Promise<string> {
+  return await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // 1. Create recipe
+      const recResult = await db.execute(sql`
+        INSERT INTO recipe (recipe_uid, code, name, status, batch_t, base_batch_kg, active_from)
+        VALUES (${recipe.code + '_' + Date.now()}, ${recipe.code}, ${recipe.full_name}, 'active', ${recipe.batch_t}, ${recipe.base_batch_kg}, ${recipe.date})
+        RETURNING id, recipe_uid
+      `);
+      const recipeId = (recResult.rows[0] as any).id;
+      const recipeUid = (recResult.rows[0] as any).recipe_uid;
+
+      // 2. Create recipe_items
+      for (const line of recipe.lines) {
+        const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${line.raw_uid}`);
+        if (skuResult.rows.length === 0) continue;
+        const skuId = (skuResult.rows[0] as any).id;
+
+        await db.execute(sql`
+          INSERT INTO recipe_item (recipe_id, sku_id, dose_kg_per_t, norm_g_per_t, consumption_kg, match_status)
+          VALUES (${recipeId}, ${skuId}, ${line.input_pct}, ${line.norm_g_per_t}, ${line.consumption_kg}, ${line.match_status})
+        `);
+      }
+
+      // 3. Create need (only for matched items)
+      const period = new Date().toISOString().slice(0, 7);
+      for (const line of recipe.lines) {
+        if (!line.raw_uid || line.consumption_kg <= 0) continue;
+        const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${line.raw_uid}`);
+        if (skuResult.rows.length === 0) continue;
+        const skuId = (skuResult.rows[0] as any).id;
+
+        await db.execute(sql`
+          INSERT INTO need (recipe_id, sku_id, period, net_qty, deducted, net_remaining, calculated_at)
+          VALUES (${recipeId}, ${skuId}, ${period}, ${line.consumption_kg}, 0, ${line.consumption_kg}, ${new Date().toISOString()})
+        `);
+      }
+
+      await db.execute(sql`COMMIT`);
+      return recipeUid;
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+}
+
+/** Rewrite recipe_items + need for a recipe (used by updateRecipeTons, partial-archive) */
+export async function pgRewriteRecipeItems(recipeUid: string, lines: {
+  raw_uid: string; consumption_kg: number; norm_g_per_t: number; match_status: string;
+}[]): Promise<void> {
+  const recResult = await db.execute(sql`SELECT id FROM recipe WHERE recipe_uid = ${recipeUid}`);
+  if (recResult.rows.length === 0) return;
+  const recipeId = (recResult.rows[0] as any).id;
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // Delete old recipe_items
+      await db.execute(sql`DELETE FROM recipe_item WHERE recipe_id = ${recipeId}`);
+
+      // Delete old need
+      await db.execute(sql`DELETE FROM need WHERE recipe_id = ${recipeId}`);
+
+      // Insert new recipe_items + need
+      const period = new Date().toISOString().slice(0, 7);
+      for (const line of lines) {
+        const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${line.raw_uid}`);
+        if (skuResult.rows.length === 0) continue;
+        const skuId = (skuResult.rows[0] as any).id;
+
+        await db.execute(sql`
+          INSERT INTO recipe_item (recipe_id, sku_id, dose_kg_per_t, norm_g_per_t, consumption_kg, match_status)
+          VALUES (${recipeId}, ${skuId}, 0, ${line.norm_g_per_t}, ${line.consumption_kg}, ${line.match_status})
+        `);
+
+        // Only create need for matched items
+        if (line.raw_uid && line.consumption_kg > 0) {
+          await db.execute(sql`
+            INSERT INTO need (recipe_id, sku_id, period, net_qty, deducted, net_remaining, calculated_at)
+            VALUES (${recipeId}, ${skuId}, ${period}, ${line.consumption_kg}, 0, ${line.consumption_kg}, ${new Date().toISOString()})
+          `);
+        }
+      }
+
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+}
+
+/** Set recipe status + recalculate need */
+export async function pgSetRecipeStatus(recipeUid: string, status: string): Promise<boolean> {
+  // Map Sheets status to PG status
+  const statusMap: Record<string, string> = {
+    'план': 'active', 'в работе': 'active', 'активен': 'active',
+    'архив': 'archived', 'отменён': 'archived', 'удалён': 'archived',
+    'plan': 'active', 'archive': 'archived', 'cancel': 'archived',
+  };
+  const pgStatus = statusMap[status] || status;
+
+  const result = await db.execute(sql`UPDATE recipe SET status = ${pgStatus} WHERE recipe_uid = ${recipeUid} RETURNING id`);
+  if (result.rows.length === 0) return false;
+
+  const recipeId = (result.rows[0] as any).id;
+
+  // Recalculate need based on consuming status
+  const isConsuming = pgStatus === 'active';
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // Delete old need
+      await db.execute(sql`DELETE FROM need WHERE recipe_id = ${recipeId}`);
+
+      if (isConsuming) {
+        // Re-create need from recipe_items
+        const items = await db.execute(sql`
+          SELECT ri.sku_id, ri.consumption_kg, s.code
+          FROM recipe_item ri JOIN sku s ON ri.sku_id = s.id
+          WHERE ri.recipe_id = ${recipeId} AND ri.consumption_kg > 0
+        `);
+        const period = new Date().toISOString().slice(0, 7);
+        for (const item of items.rows) {
+          await db.execute(sql`
+            INSERT INTO need (recipe_id, sku_id, period, net_qty, deducted, net_remaining, calculated_at)
+            VALUES (${recipeId}, ${(item as any).sku_id}, ${period}, ${(item as any).consumption_kg}, 0, ${(item as any).consumption_kg}, ${new Date().toISOString()})
+          `);
+        }
+      }
+
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+
+  return true;
+}
+
+/** Update recipe batch_t and scale all recipe_items + need proportionally */
+export async function pgUpdateRecipeTons(recipeUid: string, newTons: number): Promise<{
+  found: boolean; oldBatchT: number; newBatchT: number;
+  needLines: { raw_uid: string; net_qty: number }[];
+}> {
+  const recResult = await db.execute(sql`SELECT id, batch_t, base_batch_kg FROM recipe WHERE recipe_uid = ${recipeUid}`);
+  if (recResult.rows.length === 0) return { found: false, oldBatchT: 0, newBatchT: 0, needLines: [] };
+
+  const recipeId = (recResult.rows[0] as any).id;
+  const oldBatchT = (recResult.rows[0] as any).batch_t || 1;
+  const factor = oldBatchT > 0 ? newTons / oldBatchT : 0;
+  const newBaseKg = round2(newTons * 1000);
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      // Scale recipe_items
+      await db.execute(sql`
+        UPDATE recipe_item SET consumption_kg = ROUND((consumption_kg * ${factor})::numeric, 2)
+        WHERE recipe_id = ${recipeId} AND consumption_kg > 0
+      `);
+
+      // Update recipe batch_t and base_batch_kg
+      await db.execute(sql`UPDATE recipe SET batch_t = ${newTons}, base_batch_kg = ${newBaseKg} WHERE id = ${recipeId}`);
+
+      // Recalculate need
+      await db.execute(sql`DELETE FROM need WHERE recipe_id = ${recipeId}`);
+      const items = await db.execute(sql`
+        SELECT sku_id, consumption_kg FROM recipe_item
+        WHERE recipe_id = ${recipeId} AND consumption_kg > 0
+      `);
+      const period = new Date().toISOString().slice(0, 7);
+      for (const item of items.rows) {
+        await db.execute(sql`
+          INSERT INTO need (recipe_id, sku_id, period, net_qty, deducted, net_remaining, calculated_at)
+          VALUES (${recipeId}, ${(item as any).sku_id}, ${period}, ${(item as any).consumption_kg}, 0, ${(item as any).consumption_kg}, ${new Date().toISOString()})
+        `);
+      }
+
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+
+  // Return needLines for compatibility
+  const needResult = await db.execute(sql`
+    SELECT s.code, n.net_qty FROM need n JOIN sku s ON n.sku_id = s.id WHERE n.recipe_id = ${recipeId}
+  `);
+  const needLines = needResult.rows.map((r: any) => ({ raw_uid: r.code, net_qty: r.net_qty }));
+
+  return { found: true, oldBatchT, newBatchT: newTons, needLines };
+}
+
+/** Delete recipe + recipe_items + need (transactional) */
+export async function pgDeleteRecipe(recipeUid: string): Promise<number> {
+  const recResult = await db.execute(sql`SELECT id FROM recipe WHERE recipe_uid = ${recipeUid}`);
+  if (recResult.rows.length === 0) return 0;
+  const recipeId = (recResult.rows[0] as any).id;
+
+  await db.execute(sql`BEGIN`).then(async () => {
+    try {
+      await db.execute(sql`DELETE FROM need WHERE recipe_id = ${recipeId}`);
+      await db.execute(sql`DELETE FROM recipe_item WHERE recipe_id = ${recipeId}`);
+      await db.execute(sql`DELETE FROM recipe WHERE id = ${recipeId}`);
+      await db.execute(sql`COMMIT`);
+    } catch (e) {
+      await db.execute(sql`ROLLBACK`);
+      throw e;
+    }
+  });
+  return 1;
+}
+
+/** Bulk delete recipes */
+export async function pgDeleteRecipesBulk(recipeUids: string[]): Promise<number> {
+  let removed = 0;
+  for (const uid of recipeUids) {
+    removed += await pgDeleteRecipe(uid);
+  }
+  return removed;
+}
+
+/** Delete need by recipe */
+export async function pgDeleteNeedByRecipe(recipeUid: string): Promise<number> {
+  const recResult = await db.execute(sql`SELECT id FROM recipe WHERE recipe_uid = ${recipeUid}`);
+  if (recResult.rows.length === 0) return 0;
+  const recipeId = (recResult.rows[0] as any).id;
+  const result = await db.execute(sql`DELETE FROM need WHERE recipe_id = ${recipeId}`);
+  return (result as any).rowCount || 0;
+}
+
+/** Write need from recipe lines */
+export async function pgWriteNeedFromRecipe(recipeUid: string, lines: { raw_uid: string; net_qty: number }[]): Promise<void> {
+  const recResult = await db.execute(sql`SELECT id FROM recipe WHERE recipe_uid = ${recipeUid}`);
+  if (recResult.rows.length === 0) return;
+  const recipeId = (recResult.rows[0] as any).id;
+  const period = new Date().toISOString().slice(0, 7);
+
+  for (const line of lines) {
+    if (!line.raw_uid || line.net_qty <= 0) continue;
+    const skuResult = await db.execute(sql`SELECT id FROM sku WHERE code = ${line.raw_uid}`);
+    if (skuResult.rows.length === 0) continue;
+    const skuId = (skuResult.rows[0] as any).id;
+
+    await db.execute(sql`
+      INSERT INTO need (recipe_id, sku_id, period, net_qty, deducted, net_remaining, calculated_at)
+      VALUES (${recipeId}, ${skuId}, ${period}, ${line.net_qty}, 0, ${line.net_qty}, ${new Date().toISOString()})
+    `);
+  }
 }
