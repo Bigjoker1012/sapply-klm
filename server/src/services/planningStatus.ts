@@ -1,20 +1,3 @@
-/**
- * ЕДИНЫЙ источник расчёта статуса планирования закупок.
- *
- * Один и тот же расчёт используют:
- *   - страница «Планирование закупок» (GET /api/planning)
- *   - светофор на «Главной» (GET /api/dashboard/*)
- * чтобы статусы НИКОГДА не расходились между экранами.
- *
- * Формула (как на странице «Планирование»):
- *   qty_today  = остаток Полоцк + Липковская + в пути (без вычета рецептов)
- *                ≥ 0 (отрицательных значений не бывает).
- *   need_ratio = qty_today / среднемес. расход (только ручной ввод; иначе статус не считаем)
- *   final      = need_ratio / ручной коэф-т (запас под срок поставки, 1.0–2.0)
- *   статус:  final > 1.5 → ok; > 1.0 → control; ≥ 0.6 → buy; иначе → urgent.
- * Без введённого среднемес. расхода статус = "none" (позиция без статуса — не
- * попадает в карточки светофора).
- */
 import { sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
@@ -23,8 +6,7 @@ import {
   getLatestLipStock,
   getInboundTotals,
   getNeedTotals,
-} from "./sheetsService";
-
+} from "./readSwitch";
 export type PlanningStatus = "ok" | "control" | "buy" | "urgent" | "none";
 
 export interface PlanningComputedRow {
