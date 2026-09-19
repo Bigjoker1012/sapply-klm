@@ -3,7 +3,7 @@ import { requireAuth } from "../auth/middleware";
 import {
   addInbound, getInboundList, updateInboundStatus, deleteInbound,
   deleteInboundByMaterial,
-} from "../services/sheetsService";
+} from "../services/readSwitch";
 
 const router = Router();
 
