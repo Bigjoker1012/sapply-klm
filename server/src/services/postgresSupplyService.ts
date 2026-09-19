@@ -218,7 +218,7 @@ export async function addInbound(raw_uid: string, raw_name: string, qty: number,
     etaDate = p[2] + '-' + p[1] + '-' + p[0];
   }
 
-  // Duplicate check: same SKU + warehouse + ETA = duplicate
+  // Fast-path duplicate check (optimization for normal case)
   const existing = await db.execute(sql`
     SELECT id FROM in_transit
     WHERE sku_id = ${skuId} AND warehouse_id = ${warehouseId} AND eta_date = ${etaDate}
@@ -227,17 +227,36 @@ export async function addInbound(raw_uid: string, raw_name: string, qty: number,
   `);
   if (existing.rows.length > 0) {
     const existingId = (existing.rows[0] as any).id;
-    console.log('[inbound] duplicate rejected: sku=' + raw_uid + ' wh=' + whCode + ' eta=' + etaDate + ' existing_id=' + existingId);
+    console.log('[inbound] duplicate rejected (fast path): sku=' + raw_uid + ' wh=' + whCode + ' eta=' + etaDate + ' existing_id=' + existingId);
     return String(existingId);
   }
 
-  const result = await db.execute(sql`
-    INSERT INTO in_transit (sku_id, supplier_id, warehouse_id, qty_kg, eta_date, status, po_ref)
-    VALUES (${skuId}, ${supplierId}, ${warehouseId}, ${qty}, ${etaDate}, 'in_transit', ${document || null})
-    RETURNING id
-  `);
-
-  return String((result.rows[0] as any).id);
+  // Attempt INSERT — catches race condition via UNIQUE constraint (SQLSTATE 23505)
+  try {
+    const result = await db.execute(sql`
+      INSERT INTO in_transit (sku_id, supplier_id, warehouse_id, qty_kg, eta_date, status, po_ref)
+      VALUES (${skuId}, ${supplierId}, ${warehouseId}, ${qty}, ${etaDate}, 'in_transit', ${document || null})
+      RETURNING id
+    `);
+    return String((result.rows[0] as any).id);
+  } catch (err: any) {
+    // SQLSTATE 23505 = unique_violation — duplicate detected by UNIQUE index
+    if (err.code === '23505' && err.constraint === 'idx_in_transit_no_dup') {
+      const raceExisting = await db.execute(sql`
+        SELECT id FROM in_transit
+        WHERE sku_id = ${skuId} AND warehouse_id = ${warehouseId} AND eta_date = ${etaDate}
+        AND status NOT IN ('received')
+        LIMIT 1
+      `);
+      if (raceExisting.rows.length > 0) {
+        const existingId = (raceExisting.rows[0] as any).id;
+        console.log('[inbound] duplicate rejected (race condition): sku=' + raw_uid + ' wh=' + whCode + ' eta=' + etaDate + ' existing_id=' + existingId);
+        return String(existingId);
+      }
+    }
+    // Re-throw non-duplicate errors (FK violations, connection errors, etc.)
+    throw err;
+  }
 }
 
 export async function updateInboundStatus(id: string, status: string): Promise<void> {
