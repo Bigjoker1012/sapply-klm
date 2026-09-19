@@ -38,6 +38,8 @@ import {
   pgGetNeedList,
   pgGetNeedByRecipe,
   pgGetNeedBySku,
+  getSkuParameters,
+  updateSkuParameters,
   pgGetAliases,
   pgGetAliasesBySku,
   pgAddAlias,
@@ -131,6 +133,8 @@ export async function deleteStockSnapshot(warehouse: string, date: string): Prom
 export async function getNeedList() { return pgGetNeedList(); }
 export async function getNeedByRecipe(recipeUid: string) { return pgGetNeedByRecipe(recipeUid); }
 export async function getNeedBySku() { return pgGetNeedBySku(); }
+export async function getSkuParams() { return getSkuParameters(); }
+export async function updateSkuParams(code: string, data: { min_stock_kg?: number; purchase_coefficient?: number }) { return updateSkuParameters(code, data); }
 
 // ============================================================================
 // Aliases Layer

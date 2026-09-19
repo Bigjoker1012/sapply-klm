@@ -1552,3 +1552,43 @@ export async function pgPartialArchive(recipeUid: string, producedTons: number) 
     throw e;
   }
 }
+
+// ============================================================================
+// SKU Parameters Management (TZ 4.6)
+// ============================================================================
+
+export async function getSkuParameters() {
+  const result = await db.execute(sql`
+    SELECT code, name, min_stock_kg, purchase_coefficient
+    FROM sku WHERE active = true
+    ORDER BY code
+  `);
+  return result.rows.map((r: any) => ({
+    code: r.code,
+    name: r.name,
+    min_stock_kg: r.min_stock_kg ?? 0,
+    purchase_coefficient: r.purchase_coefficient ?? 1.0,
+  }));
+}
+
+export async function updateSkuParameters(code: string, data: {
+  min_stock_kg?: number;
+  purchase_coefficient?: number;
+}) {
+  // Validate min_stock_kg
+  if (data.min_stock_kg !== undefined) {
+    if (data.min_stock_kg < 0) throw new Error('min_stock_kg must be >= 0');
+  }
+  // Validate purchase_coefficient
+  if (data.purchase_coefficient !== undefined) {
+    if (data.purchase_coefficient < 0 || data.purchase_coefficient > 1.5) {
+      throw new Error('purchase_coefficient must be between 0 and 1.5');
+    }
+  }
+  if (data.min_stock_kg !== undefined) {
+    await db.execute(sql`UPDATE sku SET min_stock_kg = ${data.min_stock_kg} WHERE code = ${code}`);
+  }
+  if (data.purchase_coefficient !== undefined) {
+    await db.execute(sql`UPDATE sku SET purchase_coefficient = ${data.purchase_coefficient} WHERE code = ${code}`);
+  }
+}
