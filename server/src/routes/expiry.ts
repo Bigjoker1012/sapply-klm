@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
-import { getLipBatchesList, getAllRawMaterials, updateLipBatchExpiry } from "../services/sheetsService";
+import { getAllRawMaterials } from "../services/readSwitch";
+import { getLipBatchesList, updateLipBatchExpiry } from "../services/sheetsService";
 
 const router = Router();
 router.use(requireAuth);
