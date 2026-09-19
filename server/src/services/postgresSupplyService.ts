@@ -218,6 +218,19 @@ export async function addInbound(raw_uid: string, raw_name: string, qty: number,
     etaDate = p[2] + '-' + p[1] + '-' + p[0];
   }
 
+  // Duplicate check: same SKU + warehouse + ETA = duplicate
+  const existing = await db.execute(sql`
+    SELECT id FROM in_transit
+    WHERE sku_id = ${skuId} AND warehouse_id = ${warehouseId} AND eta_date = ${etaDate}
+    AND status NOT IN ('received')
+    LIMIT 1
+  `);
+  if (existing.rows.length > 0) {
+    const existingId = (existing.rows[0] as any).id;
+    console.log('[inbound] duplicate rejected: sku=' + raw_uid + ' wh=' + whCode + ' eta=' + etaDate + ' existing_id=' + existingId);
+    return String(existingId);
+  }
+
   const result = await db.execute(sql`
     INSERT INTO in_transit (sku_id, supplier_id, warehouse_id, qty_kg, eta_date, status, po_ref)
     VALUES (${skuId}, ${supplierId}, ${warehouseId}, ${qty}, ${etaDate}, 'in_transit', ${document || null})
