@@ -93,7 +93,7 @@ export async function computePlanningRows(): Promise<PlanningComputedRow[]> {
       const inbound_qty = round2(inbound.get(m.raw_uid) || 0);
       const planned_need = round2(need.get(m.raw_uid) || 0);
       // Остаток на руках: Полоцк + Липковская + в пути. Без вычета рецептов.
-      const qty_today = Math.max(0, round2(plant_qty + lip_qty + inbound_qty));
+      const qty_today = Math.max(0, round2(plant_qty + lip_qty)); // TZ 4.3: no inbound
       // Статус считаем всегда, если расход задан (не зависимо от галочки «Ручной ввод»).
       // Галочка регулирует только редактирование поля.
       const avg = manual_avg_usage;

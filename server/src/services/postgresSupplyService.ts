@@ -343,15 +343,53 @@ export async function getLiveStock() {
     const inbound_qty = inbound.get(uid) || 0;
     const base = round2(plant_qty + lip_qty);
     const cons = consumed.get(uid) || 0;
+    // available_now = plant + lip (inbound NOT included — TZ 4.3)
+    const available_now = round2(base - cons);
     out.push({
       raw_uid: uid, name: nameByUid.get(uid) || uid,
       plant_qty, lip_qty, inbound_qty, base,
-      consumed: cons, available: round2(base + inbound_qty - cons),
-      signal: stockSignal(plant_qty + inbound_qty, lip_qty, cons),
+      consumed: cons, available: available_now,
+      signal: stockSignal(plant_qty, lip_qty, cons),
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name, "ru"));
   return out;
+}
+
+/**
+ * ETA-aware inbound totals: sum of inbound WHERE eta_date <= targetDate AND active.
+ * Used for available_on_date(D) calculation.
+ */
+export async function getInboundByDate(targetDate: string): Promise<Map<string, number>> {
+  const result = await db.execute(sql`
+    SELECT s.code, SUM(i.qty_kg) as total
+    FROM in_transit i
+    JOIN sku s ON i.sku_id = s.id
+    WHERE i.eta_date <= ${targetDate}
+      AND i.status NOT IN ('received')
+    GROUP BY s.code
+  `);
+  const map = new Map<string, number>();
+  for (const row of result.rows) map.set(row.code as string, parseFloat(row.total as string) || 0);
+  return map;
+}
+
+/**
+ * Find overdue inbound: ETA < today AND status != received.
+ */
+export async function getOverdueInbound(): Promise<any[]> {
+  const today = new Date().toISOString().split('T')[0];
+  const result = await db.execute(sql`
+    SELECT s.code, i.qty_kg, i.eta_date, i.status
+    FROM in_transit i
+    JOIN sku s ON i.sku_id = s.id
+    WHERE i.eta_date < ${today}
+      AND i.status NOT IN ('received')
+    ORDER BY i.eta_date
+  `);
+  return result.rows.map((r: any) => ({
+    raw_uid: r.code, qty: r.qty_kg, eta_date: r.eta_date, status: r.status,
+  }));
 }
 
 export async function getStockDeficit() {
