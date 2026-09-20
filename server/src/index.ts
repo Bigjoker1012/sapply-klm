@@ -24,6 +24,7 @@ import rawMaterialsRoutes from "./routes/rawMaterials";
 import documentsRoutes from "./routes/documents";
 import planningRoutes from "./routes/planning";
 import skuParamsRoutes from "./routes/skuParams";
+import supplyParamsRoutes from "./routes/supplyParams";
 
 app.use("/api/auth", authRoutes);
 app.use("/api/upload", uploadRoutes);
@@ -37,6 +38,7 @@ app.use("/api/raw-materials", rawMaterialsRoutes);
 app.use("/api/documents", documentsRoutes);
 app.use("/api/planning", planningRoutes);
 app.use("/api/sku-params", skuParamsRoutes);
+app.use("/api/supply", supplyParamsRoutes);
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), storage: "PostgreSQL" });
