@@ -23,7 +23,6 @@ import dashboardRoutes from "./routes/dashboard";
 import rawMaterialsRoutes from "./routes/rawMaterials";
 import documentsRoutes from "./routes/documents";
 import planningRoutes from "./routes/planning";
-import expiryRoutes from "./routes/expiry";
 import skuParamsRoutes from "./routes/skuParams";
 
 app.use("/api/auth", authRoutes);
@@ -37,7 +36,6 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/raw-materials", rawMaterialsRoutes);
 app.use("/api/documents", documentsRoutes);
 app.use("/api/planning", planningRoutes);
-app.use("/api/expiry", expiryRoutes);
 app.use("/api/sku-params", skuParamsRoutes);
 
 app.get("/api/health", (_req, res) => {

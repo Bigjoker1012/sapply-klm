@@ -114,6 +114,22 @@ export const sku = pgTable("sku", {
   /** Точка перезаказа, кг (порог для статуса «К закупке») */
   reorderPointKg: doublePrecision("reorder_point_kg"),
   active: boolean("active").notNull().default(true),
+  /** Краткое название */
+  shortName: text("short_name"),
+  /** Коэффициент закупки (0–1.5, default 1.0) */
+  purchaseCoefficient: doublePrecision("purchase_coefficient").notNull().default(1.0),
+  /** Порог закупки в месяцах покрытия */
+  purchaseThresholdMonths: doublePrecision("purchase_threshold_months"),
+  /** Типичная закупочная партия, кг */
+  purchaseBatchKg: doublePrecision("purchase_batch_kg"),
+  /** Срок поставки, дни */
+  leadTimeDays: integer("lead_time_days"),
+  /** Режим закупки: exchange_to_market | direct | import | on_demand | do_not_purchase */
+  purchaseMode: text("purchase_mode"),
+  /** Статус закупки: active | on_request | blocked */
+  purchaseStatus: text("purchase_status"),
+  /** Комментарий по закупке */
+  purchaseComment: text("purchase_comment"),
 });
 
 /** Альтернативное название сырья (как его пишут в 1С / PDF / Excel — для матчинга загрузок) */
@@ -288,12 +304,6 @@ export const recipeItem = pgTable("recipe_item", {
   doseKgPerT: doublePrecision("dose_kg_per_t").notNull(),
   /** Порядок отображения */
   sortOrder: integer("sort_order").notNull().default(0),
-  /** Расход сырья, кг (из RecipeLines.consumption_kg) */
-  consumption_kg: doublePrecision("consumption_kg"),
-  /** Норма ввода, г/т */
-  norm_g_per_t: doublePrecision("norm_g_per_t"),
-  /** Статус сопоставления (matched/unresolved/ambiguous) */
-  match_status: text("match_status"),
   note: text("note"),
 }, (t) => ({
   uniqueRecipeSku: uniqueIndex("recipe_item_recipe_sku_unique").on(t.recipeId, t.skuId),
@@ -813,101 +823,3 @@ export type NewPurchaseOrder = typeof purchaseOrder.$inferInsert;
 export type NewUploadJob     = typeof uploadJob.$inferInsert;
 export type NewUploadRow     = typeof uploadRow.$inferInsert;
 export type NewUser          = typeof user.$inferInsert;
-// ============================================================================
-// SUPPLY KLM — ТЗ 3.2 Schema Additions
-// Добавить в конец schema.ts (перед типами)
-// ============================================================================
-
-// --- Аналоги ---
-/** Связи аналогов между SKU */
-export const analog = pgTable("analog", {
-  id: serial("id").primaryKey(),
-  skuId: integer("sku_id").notNull().references(() => sku.id),
-  analogSkuId: integer("analog_sku_id").notNull().references(() => sku.id),
-  note: text("note"),
-  createdAt: text("created_at").notNull().default(nowIso),
-}, (t) => ({
-  uniquePair: unique("analog_pair_unique").on(t.skuId, t.analogSkuId),
-}));
-
-// --- Исключения ---
-/** Исключённые из распознавания позиции */
-export const excludedItem = pgTable("excluded_item", {
-  id: serial("id").primaryKey(),
-  text: text("text").notNull(),
-  sourceType: text("source_type"),
-  createdAt: text("created_at").notNull().default(nowIso),
-}, (t) => ({
-  uniqueText: uniqueIndex("excluded_text_unique").on(sql`lower(${t.text})`),
-}));
-
-// --- Очередь нераспознанных ---
-/** Очередь нераспознанных позиций */
-export const unresolvedItem = pgTable("unresolved_item", {
-  id: serial("id").primaryKey(),
-  text: text("text").notNull(),
-  sourceType: text("source_type").notNull(),
-  fileName: text("file_name"),
-  qty: doublePrecision("qty"),
-  sourceWarehouse: text("source_warehouse"),
-  resolved: boolean("resolved").notNull().default(false),
-  resolvedBy: integer("resolved_by").references(() => user.id),
-  resolvedAt: text("resolved_at"),
-  createdAt: text("created_at").notNull().default(nowIso),
-}, (t) => ({
-  byResolved: index("unresolved_resolved_idx").on(t.resolved),
-  bySource: index("unresolved_source_idx").on(t.sourceType),
-}));
-
-// --- Потребность ---
-/** Потребность по рецептам */
-export const need = pgTable("need", {
-  id: serial("id").primaryKey(),
-  recipeId: integer("recipe_id").notNull().references(() => recipe.id),
-  skuId: integer("sku_id").notNull().references(() => sku.id),
-  period: text("period").notNull(),
-  grossQty: doublePrecision("gross_qty").notNull(),
-  adjustment: doublePrecision("adjustment").notNull().default(0),
-  netQty: doublePrecision("net_qty").notNull(),
-  version: integer("version").notNull().default(1),
-  createdAt: text("created_at").notNull().default(nowIso),
-}, (t) => ({
-  byRecipe: index("need_recipe_idx").on(t.recipeId, t.period),
-  bySku: index("need_sku_idx").on(t.skuId, t.period),
-  byPeriod: index("need_period_idx").on(t.period),
-  qtyPos: check("need_qty_pos", sql`${t.grossQty} >= 0 AND ${t.netQty} >= 0`),
-}));
-
-// ============================================================================
-// Relations для новых таблиц
-// ============================================================================
-
-export const analogRel = relations(analog, ({ one }) => ({
-  sku: one(sku, { fields: [analog.skuId], references: [sku.id] }),
-  analogSku: one(sku, { fields: [analog.analogSkuId], references: [sku.id] }),
-}));
-
-export const excludedItemRel = relations(excludedItem, () => ({}));
-
-export const unresolvedItemRel = relations(unresolvedItem, ({ one }) => ({
-  resolvedByUser: one(user, { fields: [unresolvedItem.resolvedBy], references: [user.id] }),
-}));
-
-export const needRel = relations(need, ({ one }) => ({
-  recipe: one(recipe, { fields: [need.recipeId], references: [recipe.id] }),
-  sku: one(sku, { fields: [need.skuId], references: [sku.id] }),
-}));
-
-// ============================================================================
-// Типы для новых таблиц
-// ============================================================================
-
-export type Analog = typeof analog.$inferSelect;
-export type ExcludedItem = typeof excludedItem.$inferSelect;
-export type UnresolvedItem = typeof unresolvedItem.$inferSelect;
-export type Need = typeof need.$inferSelect;
-
-export type NewAnalog = typeof analog.$inferInsert;
-export type NewExcludedItem = typeof excludedItem.$inferInsert;
-export type NewUnresolvedItem = typeof unresolvedItem.$inferInsert;
-export type NewNeed = typeof need.$inferInsert;
