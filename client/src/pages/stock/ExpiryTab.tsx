@@ -33,6 +33,16 @@ function calcStatus(expiryDate: string | null): { label: string; cls: string; da
 
 const nf = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
 
+const formatDate = (dateStr: string | null | undefined): string => {
+  if (!dateStr) return 'Не указано';
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? 'Не указано' : d.toLocaleDateString('ru-RU');
+};
+
+const formatQty = (val: number | null | undefined): string => {
+  return val != null && !isNaN(val) ? nf.format(val) : '0';
+};
+
 export default function ExpiryTab({ loading }: { loading: boolean }) {
   const [rows, setRows] = useState<ExpiryRow[]>([]);
   const [load, setLoad] = useState(true);
@@ -58,8 +68,13 @@ export default function ExpiryTab({ loading }: { loading: boolean }) {
 
   const startEdit = (row: ExpiryRow) => {
     setEditingId(row.id);
-    setEditManufacture(row.manufacture_date ?? '');
-    setEditExpiry(row.expiry_date ?? '');
+    const toDateInput = (v: string | null | undefined) => {
+      if (!v) return '';
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? '' : v.length >= 10 ? v.slice(0, 10) : '';
+    };
+    setEditManufacture(toDateInput(row.manufacture_date));
+    setEditExpiry(toDateInput(row.expiry_date));
   };
 
   const cancelEdit = () => {
@@ -75,7 +90,9 @@ export default function ExpiryTab({ loading }: { loading: boolean }) {
       body.manufacture_date = editManufacture || null;
       body.expiry_date = editExpiry || null;
       const res = await axios.put(`${API}/expiry/${id}`, body);
-      setRows(prev => prev.map(r => r.id === id ? { ...r, ...res.data } : r));
+      if (res.data) {
+        setRows(prev => prev.map(r => r.id === id ? { ...r, ...res.data } : r));
+      }
       cancelEdit();
       setMsg('✅ Сохранено');
       setTimeout(() => setMsg(''), 3000);
@@ -132,14 +149,14 @@ export default function ExpiryTab({ loading }: { loading: boolean }) {
                   <td className="px-2 py-1.5 text-gray-200 max-w-[180px] truncate">{row.sku_name}</td>
                   <td className="px-2 py-1.5 text-gray-400">{row.sku_code}</td>
                   <td className="px-2 py-1.5 text-gray-300 font-mono">{row.batch_code || '—'}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{nf.format(row.qty_kg)} {row.unit || 'кг'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{formatQty(row.qty_kg)} {row.unit || 'кг'}</td>
                   <td className="px-2 py-1.5">
                     {isEditing ? (
                       <input type="date" value={editManufacture}
                         onChange={e => setEditManufacture(e.target.value)}
                         className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-200 w-32" />
                     ) : (
-                      <span className="text-gray-400">{row.manufacture_date || 'Не указано'}</span>
+                      <span className="text-gray-400">{formatDate(row.manufacture_date)}</span>
                     )}
                   </td>
                   <td className="px-2 py-1.5">
@@ -148,7 +165,7 @@ export default function ExpiryTab({ loading }: { loading: boolean }) {
                         onChange={e => setEditExpiry(e.target.value)}
                         className="bg-gray-800 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-200 w-32" />
                     ) : (
-                      <span className="text-gray-400">{row.expiry_date || 'Не указано'}</span>
+                      <span className="text-gray-400">{formatDate(row.expiry_date)}</span>
                     )}
                   </td>
                   <td className={`px-2 py-1.5 tabular-nums ${st.cls}`}>
