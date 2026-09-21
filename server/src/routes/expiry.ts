@@ -1,66 +1,68 @@
+/**
+ * Сроки годности — партии Липковской.
+ *   GET  /api/expiry           — все партии lip_batch с датами
+ *   PUT  /api/expiry/:id       — сохранить даты производства/годности
+ */
 import { Router, Request, Response } from "express";
-import { requireAuth } from "../auth/middleware";
-import { getAllRawMaterials } from "../services/readSwitch";
-import { getLipBatchesList, updateLipBatchExpiry } from "../services/readSwitch";
+import { sql } from "drizzle-orm";
+import { db } from "../db/client";
 
 const router = Router();
-router.use(requireAuth);
-
-function getExpiryStatus(expiryDate: string): { status: string; daysRemaining: number; color: string } {
-  if (!expiryDate) return { status: "unknown", daysRemaining: -1, color: "gray" };
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const expiry = new Date(expiryDate); expiry.setHours(0, 0, 0, 0);
-  const diffTime = expiry.getTime() - today.getTime();
-  const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  if (daysRemaining < 0) return { status: "expired", daysRemaining, color: "red" };
-  if (daysRemaining <= 30) return { status: "urgent", daysRemaining, color: "red" };
-  if (daysRemaining <= 90) return { status: "warning", daysRemaining, color: "yellow" };
-  return { status: "ok", daysRemaining, color: "green" };
-}
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const [batches, materials] = await Promise.all([
-      getLipBatchesList(),
-      getAllRawMaterials(),
-    ]);
-    const nameMap = new Map(materials.map((m: any) => [m.raw_uid, m.full_name]));
-    const latestByUid = new Map<string, any>();
-    for (const batch of batches) {
-      if (!batch.raw_uid) continue;
-      const existing = latestByUid.get(batch.raw_uid);
-      if (!existing || batch.snapshot_date > existing.snapshot_date) {
-        latestByUid.set(batch.raw_uid, batch);
-      }
-    }
-    const result = Array.from(latestByUid.entries()).map(([raw_uid, batch]) => {
-      const expiryInfo = getExpiryStatus(batch.expiry_date);
-      return {
-        raw_uid, name: nameMap.get(raw_uid) || raw_uid,
-        batch_code: batch.batch_code, vendor_name: batch.vendor_name,
-        qty: batch.qty, unit: batch.unit,
-        expiry_date: batch.expiry_date, manufacture_date: batch.manufacture_date,
-        days_remaining: expiryInfo.daysRemaining, status: expiryInfo.status, color: expiryInfo.color,
-      };
-    });
-    result.sort((a, b) => a.days_remaining - b.days_remaining);
-    res.json(result);
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    const rows = await db.execute(sql`
+      SELECT lb.id, lb.batch_code, lb.qty_kg, lb.unit, lb.source,
+             lb.expiry_date, lb.manufacture_date, lb.snapshot_date,
+             lb.vendor_name,
+             s.code as sku_code, s.name as sku_name
+      FROM lip_batch lb
+      JOIN sku s ON lb.sku_id = s.id
+      WHERE lb.qty_kg > 0
+      ORDER BY lb.snapshot_date DESC, s.name, lb.batch_code
+    `);
+    res.json(rows.rows);
+  } catch (err: any) {
+    console.error("[expiry/get]", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.put("/:raw_uid", async (req: Request, res: Response) => {
+router.put("/:id", async (req: Request, res: Response) => {
   try {
-    const { raw_uid } = req.params;
-    const { expiry_date, manufacture_date } = req.body;
-    if (!expiry_date && expiry_date !== "") {
-      return res.status(400).json({ error: "expiry_date is required" });
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+
+    const { manufacture_date, expiry_date } = req.body ?? {};
+
+    const sets: any[] = [];
+    if (manufacture_date !== undefined) {
+      const v = manufacture_date === null || manufacture_date === "" ? null : String(manufacture_date);
+      sets.push(sql`manufacture_date = ${v}`);
     }
-    if (expiry_date && expiry_date !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(expiry_date)) {
-      return res.status(400).json({ error: "expiry_date must be YYYY-MM-DD format" });
+    if (expiry_date !== undefined) {
+      const v = expiry_date === null || expiry_date === "" ? null : String(expiry_date);
+      sets.push(sql`expiry_date = ${v}`);
     }
-    const updated = await updateLipBatchExpiry(raw_uid, expiry_date || null, manufacture_date || null);
-    res.json({ ok: true, updated, message: "Обновлён срок годности для " + raw_uid });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+
+    if (sets.length === 0) return res.status(400).json({ error: "No fields to update" });
+
+    await db.execute(sql`UPDATE lip_batch SET ${sql.join(sets, sql`, `)} WHERE id = ${id}`);
+
+    const updated = await db.execute(sql`
+      SELECT lb.id, lb.batch_code, lb.qty_kg, lb.unit, lb.source,
+             lb.expiry_date, lb.manufacture_date, lb.snapshot_date,
+             lb.vendor_name,
+             s.code as sku_code, s.name as sku_name
+      FROM lip_batch lb
+      JOIN sku s ON lb.sku_id = s.id
+      WHERE lb.id = ${id}
+    `);
+    res.json(updated.rows[0] ?? { id });
+  } catch (err: any) {
+    console.error("[expiry/put]", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

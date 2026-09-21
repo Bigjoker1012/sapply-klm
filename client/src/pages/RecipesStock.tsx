@@ -5,16 +5,18 @@ import StockTab from './stock/StockTab';
 import RecipesTab from './stock/RecipesTab';
 import DeficitTab from './stock/DeficitTab';
 import SnapshotsTab from './stock/SnapshotsTab';
+import ExpiryTab from './stock/ExpiryTab';
 
 const API = '/api';
 
-type SubTab = 'stock' | 'recipes' | 'deficit' | 'snapshots';
+type SubTab = 'stock' | 'recipes' | 'deficit' | 'snapshots' | 'expiry';
 
 const SUBTABS: { key: SubTab; label: string }[] = [
   { key: 'stock', label: 'Остатки' },
   { key: 'recipes', label: 'Рецепты' },
   { key: 'deficit', label: 'Дефицит / Закупка' },
   { key: 'snapshots', label: 'Снимки остатков' },
+  { key: 'expiry', label: 'Сроки' },
 ];
 
 export default function RecipesStock({ onBack }: { onBack?: () => void }) {
@@ -92,16 +94,17 @@ export default function RecipesStock({ onBack }: { onBack?: () => void }) {
       {msg && <div className="mb-4 text-sm whitespace-pre-line">{msg}</div>}
       {loading && <div className="text-gray-400 text-sm mb-3">Загрузка…</div>}
 
-      {sub === 'stock' && <StockTab live={live} deficit={deficit} recipes={recipes} loading={loading} busy={busy} setBusy={setBusy} flash={flash} reload={load} />}
+      {sub === 'stock' && <StockTab live={live} loading={loading} />}
       {sub === 'recipes' && (
         <RecipesTab recipes={recipes} loading={loading} busy={busy}
           setBusy={setBusy} flash={flash} reload={load} />
       )}
-      {sub === 'deficit' && <DeficitTab deficit={deficit} recipes={recipes} loading={loading} busy={busy} setBusy={setBusy} flash={flash} reload={load} />}
+      {sub === 'deficit' && <DeficitTab deficit={deficit} loading={loading} />}
       {sub === 'snapshots' && (
         <SnapshotsTab snapshots={snapshots} loading={loading} busy={busy}
           setBusy={setBusy} flash={flash} reload={load} />
       )}
+      {sub === 'expiry' && <ExpiryTab loading={loading} />}
     </div>
   );
 }

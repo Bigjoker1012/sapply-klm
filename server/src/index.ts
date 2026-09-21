@@ -25,6 +25,7 @@ import documentsRoutes from "./routes/documents";
 import planningRoutes from "./routes/planning";
 import skuParamsRoutes from "./routes/skuParams";
 import supplyParamsRoutes from "./routes/supplyParams";
+import expiryRoutes from "./routes/expiry";
 
 app.use("/api/auth", authRoutes);
 app.use("/api/upload", uploadRoutes);
@@ -39,6 +40,7 @@ app.use("/api/documents", documentsRoutes);
 app.use("/api/planning", planningRoutes);
 app.use("/api/sku-params", skuParamsRoutes);
 app.use("/api/supply", supplyParamsRoutes);
+app.use("/api/expiry", expiryRoutes);
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), storage: "PostgreSQL" });
