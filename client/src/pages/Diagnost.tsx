@@ -17,20 +17,49 @@ const stripToolCalls = (text: string): string =>
 
 /** Simple markdown → HTML renderer */
 const renderMarkdown = (text: string): string => {
+  // First pass: handle tables
+  const lines = text.split('\n');
+  const processed: string[] = [];
+  let inTable = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Table row: starts and ends with |
+    if (trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 2) {
+      const cells = trimmed.slice(1, -1).split('|').map(c => c.trim());
+      // Skip separator rows (----)
+      if (cells.every(c => /^[-:\s]+$/.test(c))) continue;
+      if (!inTable) { processed.push('<table class="w-full text-sm border-collapse mb-3">'); inTable = true; }
+      processed.push('<tr>' + cells.map(c => `<td class="px-3 py-1.5 border border-gray-700 text-sm">${c}</td>`).join('') + '</tr>');
+    } else {
+      if (inTable) { processed.push('</table>'); inTable = false; }
+      processed.push(line);
+    }
+  }
+  if (inTable) processed.push('</table>');
+  text = processed.join('\n');
+
+  // Second pass: inline formatting
   let html = text
-    .replace(/^### (.+)$/gm, '<h3 class="text-base font-semibold text-white mt-3 mb-1">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="text-lg font-bold text-white mt-4 mb-2">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold text-white mt-4 mb-2">$1</h1>')
+    .replace(/^### (.+)$/gm, '<h3 class="text-base font-semibold text-white mt-4 mb-2">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-lg font-bold text-white mt-5 mb-2">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold text-white mt-5 mb-3">$1</h1>')
     .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white">$1</strong>')
-    .replace(/^- \*\*(.+?)\*\*\s*[—–]\s*(.+)$/gm, '<li class="ml-4 mb-1">• <strong class="text-white">$1</strong> — $2</li>')
-    .replace(/^- \*\*(.+?)\*\*$/gm, '<li class="ml-4 mb-1">• <strong class="text-white">$1</strong></li>')
-    .replace(/^- (.+)$/gm, '<li class="ml-4 mb-1">• $1</li>')
-    .replace(/^(\d+)\. \*\*(.+?)\*\*\s*[—–]\s*(.+)$/gm, '<li class="ml-4 mb-1">$1. <strong class="text-white">$2</strong> — $3</li>')
-    .replace(/^(\d+)\. (.+)$/gm, '<li class="ml-4 mb-1">$1. $2</li>')
+    // Blockquotes
+    .replace(/^>\s*(.+)$/gm, '<div class="border-l-4 border-blue-500 pl-3 text-gray-300 italic my-1">$1</div>')
+    // Horizontal rules
+    .replace(/^---+$/gm, '<hr class="border-gray-700 my-3"/>')
+    // List items — handle both "- " and lines already starting with "•"
+    .replace(/^- \*\*(.+?)\*\*\s*[—–]\s*(.+)$/gm, '<div class="ml-4 mb-1">• <strong class="text-white">$1</strong> — $2</div>')
+    .replace(/^- \*\*(.+?)\*\*$/gm, '<div class="ml-4 mb-1">• <strong class="text-white">$1</strong></div>')
+    .replace(/^- (.+)$/gm, '<div class="ml-4 mb-1">• $1</div>')
+    .replace(/^(\d+)\. \*\*(.+?)\*\*\s*[—–]\s*(.+)$/gm, '<div class="ml-4 mb-1">$1. <strong class="text-white">$2</strong> — $3</div>')
+    .replace(/^(\d+)\. (.+)$/gm, '<div class="ml-4 mb-1">$1. $2</div>')
+    // Inline code
     .replace(/`([^`]+)`/g, '<code class="bg-gray-900 px-1 rounded text-yellow-300 text-xs">$1</code>')
+    // Paragraphs
     .replace(/\n\n/g, '</p><p class="mb-2">')
     .replace(/\n/g, '<br/>');
-  html = html.replace(/((?:<tr>.*?<\/tr>\s*)+)/gs, '<table class="w-full text-sm border-collapse mb-2">$1</table>');
+
   return html;
 };
 
