@@ -176,7 +176,7 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
                   </td>
                   <td className="px-3 py-2 text-gray-300">{item.batch_code || '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-gray-200">
-                    {item.qty.toLocaleString('ru-RU')} <span className="text-xs text-gray-500">{item.unit}</span>
+                    {item.qty != null ? item.qty.toLocaleString('ru-RU') : '0'} <span className="text-xs text-gray-500">{item.unit}</span>
                   </td>
                   <td className="px-3 py-2 text-gray-300">{fmtDate(item.manufacture_date)}</td>
                   <td className="px-3 py-2">
