@@ -52,12 +52,46 @@ export default function Expiry({ onBack }: { onBack: () => void }) {
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
 
+
+/** Map raw API response to ExpiryItem format */
+const mapApiItem = (r: any): ExpiryItem => {
+  const expDate = r.expiry_date || null;
+  let days = -1;
+  let status = 'unknown';
+  let color = 'gray';
+  if (expDate) {
+    const exp = new Date(expDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (!isNaN(exp.getTime())) {
+      days = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      if (days < 0) { status = 'expired'; color = 'red'; }
+      else if (days <= 29) { status = 'urgent'; color = 'red'; }
+      else if (days <= 90) { status = 'warning'; color = 'yellow'; }
+      else { status = 'ok'; color = 'green'; }
+    }
+  }
+  return {
+    raw_uid: r.sku_code || r.raw_uid || '',
+    name: r.sku_name || r.name || '',
+    batch_code: r.batch_code || '',
+    vendor_name: r.vendor_name || '',
+    qty: r.qty_kg ?? r.qty ?? 0,
+    unit: r.unit || 'кг',
+    expiry_date: expDate,
+    manufacture_date: r.manufacture_date || null,
+    days_remaining: days,
+    status: status,
+    color: color,
+  };
+};
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await axios.get<ExpiryItem[]>(API + '/expiry');
-      setItems(res.data ?? []);
+      setItems((res.data ?? []).map(mapApiItem));
     } catch (e: any) {
       setError(e.response?.data?.error || 'Не удалось загрузить данные по срокам');
     } finally {
