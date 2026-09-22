@@ -15,6 +15,25 @@ interface Message {
 const stripToolCalls = (text: string): string =>
   text.replace(/\[TOOL:\s*\w+\([^)]*\)\]/g, '').trim();
 
+/** Simple markdown → HTML renderer */
+const renderMarkdown = (text: string): string => {
+  let html = text
+    .replace(/^### (.+)$/gm, '<h3 class="text-base font-semibold text-white mt-3 mb-1">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-lg font-bold text-white mt-4 mb-2">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold text-white mt-4 mb-2">$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white">$1</strong>')
+    .replace(/^- \*\*(.+?)\*\*\s*[—–]\s*(.+)$/gm, '<li class="ml-4 mb-1">• <strong class="text-white">$1</strong> — $2</li>')
+    .replace(/^- \*\*(.+?)\*\*$/gm, '<li class="ml-4 mb-1">• <strong class="text-white">$1</strong></li>')
+    .replace(/^- (.+)$/gm, '<li class="ml-4 mb-1">• $1</li>')
+    .replace(/^(\d+)\. \*\*(.+?)\*\*\s*[—–]\s*(.+)$/gm, '<li class="ml-4 mb-1">$1. <strong class="text-white">$2</strong> — $3</li>')
+    .replace(/^(\d+)\. (.+)$/gm, '<li class="ml-4 mb-1">$1. $2</li>')
+    .replace(/`([^`]+)`/g, '<code class="bg-gray-900 px-1 rounded text-yellow-300 text-xs">$1</code>')
+    .replace(/\n\n/g, '</p><p class="mb-2">')
+    .replace(/\n/g, '<br/>');
+  html = html.replace(/((?:<tr>.*?<\/tr>\s*)+)/gs, '<table class="w-full text-sm border-collapse mb-2">$1</table>');
+  return html;
+};
+
 export default function Diagnost({ onBack }: { onBack: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -132,10 +151,12 @@ export default function Diagnost({ onBack }: { onBack: () => void }) {
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-800 text-gray-200'
             }`}>
-              {/* Main message content — strip TOOL markers */}
-              <div className="whitespace-pre-wrap text-sm">
-                {msg.role === 'assistant' ? stripToolCalls(msg.content) : msg.content}
-              </div>
+              {/* Main message content — strip TOOL markers + render markdown */}
+              {msg.role === 'assistant' ? (
+                <div className="whitespace-pre-wrap text-sm" dangerouslySetInnerHTML={{ __html: renderMarkdown(stripToolCalls(msg.content)) }} />
+              ) : (
+                <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
+              )}
 
               {/* Collapsible tool details */}
               {msg.toolCalls && msg.toolCalls.length > 0 && (
