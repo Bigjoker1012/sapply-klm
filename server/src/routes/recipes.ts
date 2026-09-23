@@ -228,6 +228,55 @@ router.post("/:uid/partial-archive", async (req: Request, res: Response) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── Partial archive (UID в body, т.к. recipe_uid содержит /) ──────────
+
+router.post("/partial-archive", async (req: Request, res: Response) => {
+  const uid = String(req.body?.uid || "");
+  const produced = parseFloat(String(req.body?.produced_tons ?? "").replace(",", "."));
+  if (!uid) return res.status(400).json({ error: "uid обязателен" });
+  if (!Number.isFinite(produced) || produced <= 0) {
+    return res.status(400).json({ error: "Укажите выработанное количество больше 0" });
+  }
+  try {
+    const result = await withStockMutation(async () => {
+      const recipes = await getRecipesList();
+      const rec = recipes.find(r => r.recipe_uid === uid);
+      if (!rec) return { kind: "notFound" as const };
+      if (rec.status === PG_RECIPE_STATUSES.CANCELLED || rec.status === PG_RECIPE_STATUSES.ARCHIVED) {
+        return { kind: "badStatus" as const, status: rec.status };
+      }
+      const originalTons = rec.batch_t || 1;
+      if (produced >= originalTons) {
+        const { found } = await transitionRecipe(uid, PG_RECIPE_STATUSES.ARCHIVED);
+        return { kind: "fullArchive" as const, found };
+      }
+      const paResult = await pgPartialArchive(uid, produced);
+      return {
+        kind: "partialArchive" as const,
+        originalTons: paResult.originalTons,
+        producedTons: paResult.producedTons,
+        remainingTons: paResult.remainingTons,
+        newRecipeUid: paResult.newRecipeUid,
+      };
+    });
+    if (result.kind === "notFound") return res.status(404).json({ error: "Рецепт не найден" });
+    if (result.kind === "badStatus") return res.status(400).json({ error: `Нельзя архивировать рецепт в статусе ${result.status}` });
+    if (result.kind === "fullArchive") return res.json({ ok: true, mode: "full", message: "Рецепт полностью выработан и архивирован" });
+    res.json({
+      ok: true, mode: "partial",
+      originalTons: result.originalTons,
+      producedTons: result.producedTons,
+      remainingTons: result.remainingTons,
+      newRecipeUid: result.newRecipeUid,
+      message: `Выработано ${result.producedTons} т. Остаток ${result.remainingTons} т создан как новый рецепт ${result.newRecipeUid}`,
+    });
+  } catch (err: any) {
+    console.error("[recipes/partial-archive]", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/bulk", async (req: Request, res: Response) => {
   const uids: string[] = Array.isArray(req.body?.uids) ? req.body.uids : [];
   const status = ACTION_STATUS[String(req.body?.status || "")];
