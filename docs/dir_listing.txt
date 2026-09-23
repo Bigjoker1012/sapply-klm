@@ -1,0 +1,18 @@
+FILE: context.md
+FILE: progress.md
+FILE: notes.md
+FILE: Авиабилеты_Минск_Крит_v2.docx
+FILE: hotels_agios_nikolaos.html
+FILE: Ежемесячный отчет 2.html
+FILE: secrets.md
+DIR: Гараж
+  onboarding
+  parse-transaction
+  process-voice
+  generate-insights
+  supabase_schema.sql
+  ТЗ для ИИ.docx
+FILE: test.txt
+FILE: MiMo_AI_Upgrade_Proposal.docx
+FILE: Keenan_CRM_Руководство_для_инженеров.md
+FILE: Keenan_CRM_Руководство_для_инженеров.docx

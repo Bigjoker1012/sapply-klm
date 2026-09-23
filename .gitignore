@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+uploads/
+data/
+*.db
+*.db-shm
+*.db-wal
+google_sa.json
+*.js
+
+docs/agentsync_notes.txt
+docs/agentsync_progress.txt
+docs/sync_notes.txt
+docs/sync_progress.txt

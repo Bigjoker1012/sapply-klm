@@ -1,0 +1,53 @@
+modules = ["python-3.11", "nodejs-20", "postgresql-16"]
+[agent]
+expertMode = true
+integrations = ["google-sheet:1.0.0", "github:1.0.0"]
+
+[nix]
+channel = "stable-25_05"
+packages = ["freetype", "gumbo", "harfbuzz", "jbig2dec", "libjpeg_turbo", "mupdf", "openjpeg", "swig", "xcbuild"]
+
+[[ports]]
+localPort = 5000
+externalPort = 5000
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 23636
+externalPort = 80
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npx concurrently \"npx ts-node --transpile-only -P server/tsconfig.json server/src/index.ts\" \"cd client && npx vite\""
+waitForPort = 5000
+
+[deployment]
+deploymentTarget = "vm"
+run = ["npx", "concurrently", "npx ts-node --transpile-only -P server/tsconfig.json server/src/index.ts", "cd client && npx vite"]
+build = ["npm", "run", "build"]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 180000
