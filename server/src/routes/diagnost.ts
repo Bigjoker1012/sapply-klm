@@ -1,8 +1,8 @@
 /**
  * Доктор Саппи — AI-диагност Supply KLM.
  * Двухэтапный агент:
- *   1) MiMo выбирает и выполняет инструменты
- *   2) MiMo анализирует результаты и выдаёт человеческий вывод
+ *   1) MiMo выбирает и вызывает инструменты
+ *   2) MiMo анализирует результаты → человеческий вывод
  */
 import { Router, Request, Response } from "express";
 import { requireAuth } from "../auth/middleware";
@@ -84,63 +84,68 @@ const diagnosticTools: Record<string, DiagnosticTool> = {
       return { total: (result.rows[0] as any).total };
     } catch (e: any) { return { status: "error", error: e.message }; }
   },
+  search_recipe_by_sku: async (skuCode: string) => {
+    try {
+      if (!skuCode) return { error: "sku_code required" };
+      const result = await db.execute(sql`
+        SELECT r.recipe_uid, r.code, r.full_name, r.status, r.batch_t,
+               ri.sku_id, ri.dose_kg_per_t,
+               s.code as sku_code, s.name as sku_name
+        FROM recipe r
+        JOIN recipe_item ri ON ri.recipe_id = r.id
+        JOIN sku s ON ri.sku_id = s.id
+        WHERE s.code = ${skuCode}
+        ORDER BY r.status, r.recipe_uid
+      `);
+      return { recipes: result.rows };
+    } catch (e: any) { return { status: "error", error: e.message }; }
+  },
 };
 
 // ── Промпты ────────────────────────────────────────────────────────────
 
 const STEP1_PROMPT = `Ты — Доктор Саппи, AI-диагност приложения Supply KLM.
 
-Твоя задача — диагностировать проблемы в работе Supply KLM.
+Твоя задача — вызвать нужные инструменты для проверки состояния системы.
 
 Доступные инструменты (вызывай в формате [TOOL: имя(параметры)]):
-1. check_health() - проверить здоровье сервера
-2. check_api(endpoint) - проверить API endpoint
-3. check_database() - проверить БД и список таблиц
-4. check_table(tableName) - проверить таблицу
-5. check_stock() - проверить снимки остатков
-6. check_recipes() - статистика рецептов
-7. check_batches() - партии и сроки годности
-8. check_unresolved() - нераспознанные позиции
-9. check_sku_count() - количество SKU
+1. check_health() — здоровье сервера
+2. check_api(endpoint) — проверить API endpoint
+3. check_database() — БД и список таблиц
+4. check_table(tableName) — проверить таблицу
+5. check_stock() — снимки остатков
+6. check_recipes() — статистика рецептов
+7. search_recipe_by_sku(sku_code) — найти рецепты с конкретным сырьём
+8. check_batches() — партии и сроки годности
+9. check_unresolved() — нераспознанные позиции
+10. check_sku_count() — количество SKU
 
-Правила:
-- Всегда начинай с проверки состояния
-- Вызывай только нужные инструменты
-- НЕ анализируй результаты — это будет отдельным шагом
-- НЕ пиши итоговый отчёт
-- Просто вызови инструменты и передай результаты`;
+ПРАВИЛА:
+- Вызывай ТОЛЬКО инструменты, НЕ анализируй результаты
+- НЕ пиши итоговый отчёт — это будет отдельным шагом
+- НЕ пиши "Вот результаты:" или подобное — просто вызови инструменты`;
 
 const STEP2_PROMPT = `Ты — Доктор Саппи, AI-диагност приложения Supply KLM.
 
-Тебе переданы результаты диагностики. Проанализируй их и сформируй ЧЕЛОВЕЧЕСКИЙ отчёт на русском языке.
+Тебе переданы результаты диагностики. Проанализируй их и сформируй КОРОТКИЙ человеческий вывод на русском языке.
 
-Формат отчёта:
-
-1. Заголовок: «Диагностика Supply завершена»
-2. Статус сервера и БД (🟢/🔴)
-3. Ключевые цифры (рецепты, SKU, остатки) — простым языком
-4. Обнаруженные проблемы (если есть) — 🟡 или 🔴
-5. Итоговая рекомендация
-
-ПРАВИЛА:
-- Говори простым языком, без JSON и технических терминов
-- Используй эмодзи для статусов
-- Показывай конкретные цифры из результатов
-- Если ошибок нет — явно скажи об этом
-- Если есть проблемы — объясни их простым языком
-- НЕ показывай JSON-результаты инструментов
-- НЕ вызывай инструменты повторно`;
+ФОРМАТ ОТВЕТА:
+1. 1-3 предложения с выводом
+2. Если всё ОК — просто скажи "Проверила. Всё работает нормально." или аналогично
+3. Если проблема — назови конкретную проблему простым языком
+4. Используй эмодзи: 🟢 ОК, 🟡 внимание, 🔴 проблема
+5. НЕ показывай JSON
+6. НЕ показывай технические данные
+7. НЕ вызывай инструменты повторно
+8. Ответ должен быть КОРОТКИМ — 2-5 предложений`;
 
 // ── Вспомогательные функции ────────────────────────────────────────────
 
 async function callMimo(messages: { role: string; content: string }[]): Promise<string> {
   const res = await fetch(MIMO_API_URL + "/chat/completions", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + MIMO_API_KEY,
-    },
-    body: JSON.stringify({ model: MIMO_MODEL, messages, temperature: 0.3, max_tokens: 2000 }),
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MIMO_API_KEY },
+    body: JSON.stringify({ model: MIMO_MODEL, messages, temperature: 0.3, max_tokens: 1500 }),
   });
   if (!res.ok) throw new Error("MiMo API error: " + res.status);
   const data = await res.json() as any;
@@ -156,10 +161,6 @@ function parseToolCalls(text: string): { tool: string; args: string[] }[] {
     calls.push({ tool: m[1], args });
   }
   return calls;
-}
-
-function stripToolCalls(text: string): string {
-  return text.replace(/\[TOOL:\s*\w+\([^)]*\)\]/g, "").trim();
 }
 
 // ── Маршрут ────────────────────────────────────────────────────────────
@@ -181,9 +182,9 @@ router.post("/chat", async (req: Request, res: Response) => {
 
     const step1Response = await callMimo(step1Messages);
     const t1 = Date.now();
-    console.log(`[diagnost] Step 1 (model → tools): ${t1 - t0}ms`);
+    console.log(`[diagnost] Step1: ${t1 - t0}ms`);
 
-    // ── Парсинг и выполнение инструментов ──
+    // ── Выполнение инструментов ──
     const toolCalls = parseToolCalls(step1Response);
     const toolResults: Record<string, any> = {};
 
@@ -198,24 +199,24 @@ router.post("/chat", async (req: Request, res: Response) => {
       }
     }
     const t2 = Date.now();
-    console.log(`[diagnost] Step 2 (tools exec): ${t2 - t1}ms, tools: ${Object.keys(toolResults).join(", ")}`);
+    console.log(`[diagnost] Tools: ${t2 - t1}ms, tools: ${Object.keys(toolResults).join(", ")}`);
 
     // ── Шаг 2: Модель анализирует результаты ──
-    const resultsSummary = Object.entries(toolResults)
-      .map(([name, result]) => `Результат ${name}:\n${JSON.stringify(result, null, 2)}`)
+    const resultsText = Object.entries(toolResults)
+      .map(([name, result]) => `${name}:\n${JSON.stringify(result, null, 2)}`)
       .join("\n\n");
 
     const step2Messages = [
       { role: "system", content: STEP2_PROMPT },
-      { role: "user", content: `Исходный запрос пользователя: ${message}\n\nРезультаты диагностики:\n${resultsSummary}` }
+      { role: "user", content: `Запрос пользователя: ${message}\n\nРезультаты диагностики:\n${resultsText}` }
     ];
 
     const step2Response = await callMimo(step2Messages);
     const t3 = Date.now();
-    console.log(`[diagnost] Step 3 (analysis): ${t3 - t2}ms`);
+    console.log(`[diagnost] Step2: ${t3 - t2}ms`);
 
-    // ── Формируем ответ ──
-    const cleanMessage = stripToolCalls(step2Response);
+    // ── Ответ: человеческий вывод ──
+    const cleanMessage = step2Response.replace(/\[TOOL:\s*\w+\([^)]*\)\]/g, "").trim();
 
     res.json({
       message: cleanMessage,
