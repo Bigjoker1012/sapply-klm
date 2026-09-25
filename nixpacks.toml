@@ -1,0 +1,16 @@
+[phases.setup]
+nixPkgs = [
+  "nodejs_20",
+  "python311",
+  "tesseract5",
+  "python311Packages.pymupdf"
+]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"

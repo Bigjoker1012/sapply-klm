@@ -1,0 +1,682 @@
+[
+  {
+    "code": "RAW_001",
+    "name": "вит А 1000",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 70.45,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_002",
+    "name": "вит Д3 500",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 32.71,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_003",
+    "name": "вит Е 50%",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 951.46,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_004",
+    "name": "вит В1 (тиамин)",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_005",
+    "name": "вит В2",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0.43,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_006",
+    "name": "вит В3, Нутравит В5 (кальпан)",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0.08,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_007",
+    "name": "вит В5 (ниацин)",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0.25,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_008",
+    "name": "вит В6 (пиридоксин)",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0.22,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_009",
+    "name": "вит Н (биотин)",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 218.51,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_010",
+    "name": "окись магния, порошок магнезитовый",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 12526.26,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_011",
+    "name": "сульфат магния б/водный, магний с/кисл.",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 9027.02,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_012",
+    "name": "сульфат магния Кизерит",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_013",
+    "name": "сера",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 93.42,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_014",
+    "name": "сульфат железа",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 38.56,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_015",
+    "name": "медный купорос",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 214.34,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_016",
+    "name": "цинковый купорос+ сульфат цинка",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 836.95,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_017",
+    "name": "сульфат марганца",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 532.47,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_018",
+    "name": "калий йод",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 15.3,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_019",
+    "name": "йодат кальция",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_020",
+    "name": "кобальт у/к",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 9.94,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_021",
+    "name": "селенит натрия",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 2.33,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_022",
+    "name": "Метионин",
+    "category": "amino_acid",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_023",
+    "name": "МиТаргет (Метионин защищённый)",
+    "category": "amino_acid",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 222.5,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_024",
+    "name": "монокальцийфосфат (МКФ)",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 5307.8,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_025",
+    "name": "мука известняковая",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 26713.63,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_026",
+    "name": "Соль пищ выварочн сорт экстра",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 3144.59,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_027",
+    "name": "Гидрокарбонат натрия Е500 (сода)",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 354.31,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_028",
+    "name": "Актиген",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 735.67,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_029",
+    "name": "Биогром Энерджи",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 81.14,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_030",
+    "name": "Биогром Холин",
+    "category": "vitamin",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 408.02,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_031",
+    "name": "Биоплекс марганец",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 910.76,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_032",
+    "name": "Биоплекс медь",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 756.8,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_033",
+    "name": "Биоплекс цинк",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 1571.23,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_034",
+    "name": "Биопромис Селен Пауэр",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_035",
+    "name": "Биопромис Хром пиколинат",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 57,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_036",
+    "name": "Виусид-Вет",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 98.52,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_037",
+    "name": "Декстроза",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 9645.26,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_038",
+    "name": "Диоксид кремния Экстрасил",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_039",
+    "name": "Дрожжевые клетки Saccharomyces",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 782.35,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_040",
+    "name": "Оксикап",
+    "category": "antioxidant",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 42.28,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_041",
+    "name": "Олеобиотик",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 8.65,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_042",
+    "name": "Оптиген",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 899.33,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_043",
+    "name": "Оптима 100",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 500,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_044",
+    "name": "МеноМет",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_045",
+    "name": "Микосорб",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 3746.67,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_046",
+    "name": "МЕГАсодиум",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 5435.56,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_047",
+    "name": "Менаро сливки",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 5.04,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_048",
+    "name": "Новихол",
+    "category": "antioxidant",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 451.13,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_049",
+    "name": "Нупро",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 13.78,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_050",
+    "name": "Карбонат калия гранул",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 3216.46,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_051",
+    "name": "Карбонат калия (поташ)",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_052",
+    "name": "кальций хлористый пищ Фудикс",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 7595.05,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_053",
+    "name": "кальция пропионат",
+    "category": "antioxidant",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 2661.45,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_054",
+    "name": "Концентрат СЖК",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 7.76,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_055",
+    "name": "и-сак",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 531.55,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_056",
+    "name": "Селениум Ист 3000",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 30.5,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_057",
+    "name": "Сел-плекс 2300",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 873.89,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_058",
+    "name": "Сыворотка",
+    "category": "filler",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 106.85,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_059",
+    "name": "Пулкокс С",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 83.29,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_060",
+    "name": "Луктаром Молочно-Ванильный",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 176.14,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_061",
+    "name": "Липро",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 365.41,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_062",
+    "name": "Миалакто",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_063",
+    "name": "Фекорд -2012-Ф гр.2",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 1.19,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_064",
+    "name": "Файбрамакс",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 150,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_065",
+    "name": "ХолиТаргет",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 0,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_066",
+    "name": "Хромсодержащие дрожжи",
+    "category": "microelement",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 366.21,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_067",
+    "name": "Энерфат",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 1556.39,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  },
+  {
+    "code": "RAW_068",
+    "name": "Эсид-Пак",
+    "category": "other",
+    "unit": "кг",
+    "active": true,
+    "avgMonthlyUsageKg": 4.03,
+    "reorderThresholdFactor": 0.5,
+    "leadTimeDays": 30
+  }
+]

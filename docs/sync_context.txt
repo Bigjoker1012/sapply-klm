@@ -1,0 +1,284 @@
+# Контекст для агента
+
+> Этот файл — общее состояние между сессиями. Оба агента (домашний и рабочий) читают и обновляют его.
+
+## Пользователь
+
+**Андрей Юрьевич Кузнецов («Андрюха»)**
+- Никнейм: Bigjoker
+- Дата рождения: 10 декабря 1960 г. (65 лет)
+- Локация: Минск, Беларусь
+- Семья: женат (2-й брак) на Наташе (1970 г.р.), дочь (1984 г.р.), сын (1990 г.р.), двое внуков
+- Должность: Заместитель директора по сбыту кормов, ООО «КЛМ», Минск
+- Уровень: Топ-менеджер
+- Домены: Продажи кормов, сельскохозяйственная продукция, кормовые добавки
+- Стиль общения: дружеский, на «ты», зови Андрюха
+
+## Текущее состояние (2026-09-07, обновлено)
+
+**Сервер 192.168.51.240 (основной, внутренний):**
+- klm-pl: http://192.168.51.240:8501 ✅ (Streamlit + PM2)
+- butb-screen: http://192.168.51.240:8443 ✅ (Docker)
+- PostgreSQL: порт 5433 (localhost)
+- SSH ключ: /home/admin01/.ssh/id_server → C:\Users\admin\.ssh\id_server
+- SSH подключение: ssh -i C:\Users\admin\.ssh\id_server admin01@192.168.51.240
+- **Характеристики:** VMware VM, Xeon E5-2643 v2 (4 ядра), 11GB RAM, 46GB диск, **НЕТ GPU**
+
+**Автозапуск (systemd на внутреннем сервере):**
+- pm2-admin01 — PM2 process manager
+- klm-tunnel — SSH reverse tunnel klm-pl (порт 8501→VPS:8501) ✅ enabled
+- butb-tunnel — SSH reverse tunnel butb-screen (порт 8444→VPS:8443) ✅ enabled
+
+**Внешние ссылки (через VPS 72.56.239.5):**
+- https://klm.pl.klm-fid.by → klm-pl ✅ (SSL, SSH tunnel)
+- https://screen.klm-fid.by → butb-screen ✅ (SSL, SSH tunnel)
+- https://egalis.klm-fid.by → EgalisApp ✅ (SSL, порт 8502, на VPS)
+- https://calc.klm-fid.by → AgroCalc ✅ (SSL, порт 8080)
+- https://board.klm-fid.by → KLM Dashboard ✅ (SSL)
+- https://supply.klm-fid.by → sapply-klm ✅ (SSL)
+- https://spr.klm-fid.by → Справочник ✅ (SSL)
+
+**PM2 приложения на VPS (72.56.239.5):**
+
+| Имя | Порт | Домен | Описание |
+|-----|------|-------|----------|
+| klm-dashboard | 3000 | board.klm-fid.by | Дашборд KPI |
+| sapply-klm | 3001 | supply.klm-fid.by | ERP снабжения |
+| agro-api | 8080 | — | API AgroCalc |
+| egalis-app | 8502 | egalis.klm-fid.by | Распределение сырья |
+| butb-screen | 8444 | screen.klm-fid.by | Торги (туннель) |
+
+**Код klm-pl:**
+- Локально: `G:\Мой диск\MIMO_MIGRATION\GoogleDrive-klm-pl\`
+- GitHub: Bigjoker1012/klm-pl (commit `2716267`)
+- На сервере: /opt/klm-pl/ (192.168.51.240)
+- Деплой: SSH → pm2 restart klm-pl --update-env
+
+**КЛМ-ПЛ — путь:**
+- **ТЗ:** `C:\Users\kyzzy\OneDrive\Рабочий стол\Путевой ИИ\KLM-PL_ТЗ_единый_файл.docx`
+- **Карта аудита:** `C:\Users\kyzzy\OneDrive\Рабочий стол\KLM-PL_Audit_Map.md`
+- Шаблон: /opt/klm-pl/templates/universal_template.xlsx (УНИВЕРСАЛЬНЫЙ)
+- **base_consumption**: Z1=6.8 (приказ 14.05.2026)
+- **J/K — ФОРМУЛЫ шаблона!** НЕ записываем
+- **N — записываем из FuelEngine v9** (fact_consumption), целые числа
+- **FuelEngine v9**: единый алгоритм по ТЗ п.13-17, обратный расчёт, OVERFILL/UNDERFLOW/OK
+- **Названия листов**: путевой MM-YY, спутн MM-YY, маршрут MM-YY, задание MM-YY, карточка (БЕЗ месяца)
+- **⚠️ Sheet5 формулы НЕ РАБОТАЮТ** — нерешённая проблема (2026-09-15)
+- **BTS Token (сервер)**: `f006cbea-e067-44f6-a840-4d3e7e5676fe`
+- **Топливо**: АИ-95 (не ДТ)
+- **Директор**: Н.Б. Мурашко (ВСЕГДА)
+- **SSH туннель**: авто-reconnect в цикле `while true`
+- **Формула нормы**: `=ОКРУГЛ(G/100*Z1 + H/100*Z1*0.15 + G/100*Z1*0.07 - I/100*Z1*0.05; 2)`
+
+## Проект EgalisApp (НОВЫЙ — 2026-09-03)
+
+**Назначение:** Веб-приложение для распределения дефицитного сырья (Эгалис Фермент) между предприятиями менеджеров.
+
+**Стек:** Streamlit + Python, PM2, nginx, SSL (Let's Encrypt)
+
+**Репозиторий:** https://github.com/Bigjoker1012/egalis
+
+**Доступ:** https://egalis.klm-fid.by (VPS 72.56.239.5, порт 8502)
+
+**Код:** /var/www/egalis-app/ на VPS
+
+**Функционал (MVP):**
+- Дашборд: 4 карточки в сайдбаре (На складе / В пути / Потребность / Дефицит) с разбивкой по продуктам
+- Менеджеры: expander'ы с предприятиями, редактирование кг по продуктам
+- Предприятия: добавление, удаление, корректировка
+- Товары: управление остатками (Эгалис 200гр, 50гр)
+- Экспорт Excel со стилями (2 листа: Расклад + Сводка)
+- Данные из Excel «Эгалис Резерв» (менеджеры: Горбач, Коширец, Афанасович)
+
+## Проект AgroCalc КЛМ
+
+**Доступ:** https://calc.klm-fid.by (VPS, порт 8080)
+**Код:** /var/www/agro-calc-klm/ на VPS
+**Репозиторий:** https://github.com/Bigjoker1012/agro-calc-klm
+
+## Ключевые проекты 2026
+
+| Проект | Описание | Статус |
+|--------|----------|--------|
+| EgalisApp | Распределение дефицитного сырья | MVP готов, egalis.klm-fid.by |
+| AgroCalc КЛМ | Калькулятор дозировки консервантов | Стабилен, calc.klm-fid.by |
+| КЛМ-ПЛ | Автоматизация путевых листов | Работает, klm.pl.klm-fid.by |
+| sapply-klm | ERP снабжения + Сроки годности + Списание рецептов | Активен, supply.klm-fid.by |
+| Пульс КЛМ | Дашборд KPI | Работает, board.klm-fid.by |
+| Keenan-KLM CRM | CRM для продаж кормораздатчиков Keenan | Активен, keenan.klm-fid.by, ветка fix/tz2-bugs |
+
+## Сервер klm-fid.by (72.56.239.5, Timeweb)
+
+**Доступ:** root / yt.+UDi9nv3Zkq
+**Nginx:** Ubuntu, ports 80/443, Let's Encrypt SSL
+
+## Сервер КЛМ (внутренний, 192.168.51.240)
+
+**Доступ:** admin01 / SuperAI01 (через VPN)
+**ОС:** Ubuntu Server 26.04, 11GB RAM
+
+## НОВЫЙ ПРОЕКТ: Keenan-KLM CRM (2026-09-10)
+
+**Назначение:** CRM для продаж кормораздатчиков Keenan (инженеры отдела кормления)
+**Стек:** FastAPI + Vue 3 + SQLite + Docker + TailwindCSS + Leaflet + PWA
+**Репозиторий:** https://github.com/Bigjoker1012/keenan-crm
+**Доступ:** http://192.168.51.240/keenan/ (порт 80, через Nginx)
+**Целевой URL:** https://keenan.klm-fid.by (нужен DNS + SSL)
+**Путь на сервере:** /home/andrey/keenan-crm/
+**Локальный код:** C:\MIMO\keenan-crm\ (домашний ноут Мимон)
+**Docker:** backend:8000 + frontend:3000, `docker compose` (не docker-compose)
+**БД:** SQLite /app/data/keenan.db
+
+**Логины:**
+| Пользователь | Пароль | Роль |
+|---|---|---|
+| andrey | Klm2026! | admin |
+| NB | NB | admin (директор) |
+| engineer1 | pass1 | engineer |
+| engineer2 | pass2 | engineer |
+
+**Модели БД:** User, Farm, Contact, Deal, Visit, Task, Machine
+**Статусы ферм:** lead → call → audit → kp → demo → offer → sold / archive / service
+**Статусы машин:** active, maintenance, broken, sold, returned
+**Функционал:** Kanban drag&drop, карта Беларуси, PWA офлайн, геолокация, фото/голос, Machine карточка, сервисные визиты
+
+**Nginx (внутренний):** /keenan/ → localhost:3000 (в klm-apps.conf)
+**SSH туннель:** systemd service `keenan-tunnel` (192.168.51.240 → VPS:3002)
+**Nginx (VPS):** /etc/nginx/sites-available/keenan.klm-fid.by (HTTPS, SSL через certbot)
+
+**Завершено:** деплой, туннель, тестовые фермы, DNS, SSL, репозиторий, документация, тестирование, фикс валидации ✅
+**URL:** https://keenan.klm-fid.by/ (HTTPS, работает)
+**Ветка:** fix/tz2-bugs (НЕ вмержена в main)
+**Последние коммиты:** d510550 (auto-task visit_id), d1238ae (service visit), 0214498 (assignee fix)
+**Туннель:** порт 3002 (VPS) → 3000 (внутренний), т.к. 3000/3001 заняты
+**Известный баг:** фронтенд baseURL="/api" дублирует путь → nginx rewrite fix на VPS
+**Git:** репо на GitHub, 43 файла, ветка master (коммит 2ddb3db)
+**Тесты:** API 28 тестов (27/28), Playwright 20 тестов (20/20) — все пройдены
+
+## НОВЫЙ ПРОЕКТ: Локальный ИИ для КЛМ (2026-09-07)
+
+**Статус:** Планирование, бюджет одобрен ($3000-4600)
+
+**Архитектура гибрида:**
+`
+Сотрудники → Open WebUI → LiteLLM (роутер)
+                            ├── Qwen3-8B (локально, бесплатно)
+                            └── DeepSeek (облако, по запросу)
+`
+
+**Выбранная GPU:** NVIDIA RTX A4500 20GB GDDR6 (5443 BYN / ~$1700)
+- 20GB VRAM — хватит для Qwen3-8B, MiMo-7B, Qwen3-14B
+- Пропускная способность: 640 ГБ/с
+- Архитектура: Ampere (2020), профессиональная серия
+- Ссылка: https://catalog.onliner.by/videocard/nvidia/9005g1321750000
+
+**Конфигурация ПК (Вариант 2 — оптимальная, ~$4600):**
+- Процессор: AMD Ryzen 9 9900X (12 ядер, AM5)
+- Кулер: ID-Cooling SE-207-XT Advanced (280W)
+- Материнка: Asus PRIME X870-P (AM5, ATX)
+- RAM: 64GB DDR5 6000MHz (2x32GB Kingston FURY Beast Black)
+- SSD: 1TB Samsung 9100 PRO NVMe
+- БП: 1000W Chieftec SPX-1000-FC (80 Plus Platinum)
+- Корпус: Powerman TS-4U (серверный, 4U)
+- Итого ПК: 9300 BYN (~$2900)
+- Итого с GPU: 14743 BYN (~$4600)
+
+**Конфигурация ПК (Вариант 1 — бюджетная, ~$3000):**
+- Процессор: AMD Ryzen 7 7700X (8 ядер, AM5)
+- Кулер: ID-Cooling SE-224-XT
+- Материнка: Asus PRIME B650M-K (AM5)
+- RAM: 32GB DDR5 5600MHz (2x16GB)
+- SSD: 1TB Kingston NV2 NVMe
+- БП: 650W Chieftec GPM-650C
+- Корпус: ATX Mid-Tower
+- Итого ПК: ~2100 BYN (~$660)
+- Итого с GPU: ~7543 BYN (~$2360)
+
+**Стек ПО:**
+- Ubuntu 24.04 + NVIDIA драйверы
+- Ollama (установка одной командой)
+- Qwen3-8B (основная модель, лучший русский язык)
+- MiMo-7B-RL (для кода, опционально)
+- Open WebUI (Docker, web-интерфейс)
+- LiteLLM (роутер между локальной и облачной моделью)
+- SearXNG (локальный поиск для Deep Research)
+
+**Функционал:**
+- Текстовый чат с ИИ ✅
+- Прикрепление файлов (PDF, TXT, DOCX) ✅
+- Генерация кода ✅
+- Deep Research (поиск + анализ + отчёт) — через SearXNG + orchestrator
+- Мультимодальность (изображения) ❌ — MiMo/Qwen3 текстовые
+- 3-5 одновременных юзеров (RTX 4060 Ti)
+
+**Безопасность:**
+- По умолчанию — всё локально (данные не покидают офис)
+- Облако — только по явному запросу сотрудника
+- Логирование всех запросов наружу
+
+**Документация:**
+- MiMo_AI_Upgrade_Proposal.docx — деловое предложение с обоснованием
+- План: C:\Users\admin\.local\share\mimocode\plans\1788756998063-sunny-eagle.md
+
+**Альтернативы моделей (для локального запуска):**
+
+| Модель | Русский | Бизнес | Код | Установка |
+|--------|---------|--------|-----|-----------|
+| Qwen3-8B 🏆 | отлично | отлично | хорошо | ollama pull qwen3:8b |
+| DeepSeek-R1:7b | хорошо | хорошо | средне | ollama pull deepseek-r1:7b |
+| MiMo-7B-RL | средне | средне | отлично | GGUF, нужна конвертация |
+
+**Следующие шаги:**
+1. Андрюха покупает ПК + GPU
+2. Андрюха регистрируется на DeepSeek API (https://platform.deepseek.com)
+3. Кекс/Мимон устанавливают Ubuntu + Ollama + Qwen3
+4. Настройка Open WebUI + LiteLLM
+5. Интеграция с проектами КЛМ
+
+## Домашний агент
+
+- Имя: Мимон
+- Ноут: домашний (Intel Celeron N4020)
+
+## Рабочий агент
+
+- Имя: Кекс
+- Ноут: рабочий
+
+## Бюджет токенов
+
+- **Баланс:** 7 000 000 токенов
+
+## Личные планы (2026-09)
+
+- Отпуск с 15.09.2026: 2 дня в Польше, затем 10-12 дней на Крите
+
+## Текущее состояние sapply-klm (2026-09-17)
+
+- **RecipeLines:** 333 строки (очищены от 6400+), 17 активных рецептов
+- **Списание:** 47 515 кг суммарно по всем рецептам в «плане»
+- **Автоочистка:** отменённые рецепты автоматически удаляются при >20 (самые старые)
+- **Удаление:** «Удалить выбранные» и «Удалить все» работают (batch 10, delay 2s)
+- **Витамин Е50:** исправлен — теперь списывается (isPlantRow исключает витамины)
+- **Даты:** все серийные даты сконвертированы в YYYY-MM-DD
+- **AUTH:** env-based (`process.env.AUTH_DISABLED === "true"`), requireAuth на всех API роутах
+
+### Git состояние
+- **Ветка:** `fix/supply-audit-2026-09-17`
+- **Последний commit:** `8790611` (fix: enforce authentication for supply api)
+- **Старые изменения:** в `work/current-fixes-2026-09-17` (commit `a173294`)
+- **Working tree:** clean
+
+### Исправлено (Task #1: AUTH) ✅
+1. `AUTH_DISABLED = true` → `process.env.AUTH_DISABLED === "true"`
+2. `requireAuth` на 5 роутов: expiry, inventory, rawMaterials, synonyms, upload
+3. `.env.example` обновлён
+4. Все тесты пройдены
+
+### Ожидает исправления (Task #2+)
+- deleteRecipe: r[0]→r[1], A2:H→A2:L
+- writePlantStock: data loss risk при ошибке записи
+- Quantity validation: нет проверки qty ≤ 0
+- Inbound: нет idempotency
+- ID collision: 10 мест с Date.now()
+- Role enforcement: не внедрён

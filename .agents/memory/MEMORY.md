@@ -1,0 +1,19 @@
+- [Aliases vs catalog codes](aliases-vs-catalog-codes.md) — synonym codes (RAW030) ≠ catalog codes (RAW_030); never normalize by underscore, only exact match; trust synonym TEXTS not codes.
+- [Sheets vs Postgres split](sheets-vs-postgres-split.md) — recognition/upload flow = Google Sheets; dashboard decisions = Postgres; read unmatched+catalog from Sheets endpoints, not /dashboard/all.
+- [Stock summation = latest snapshot](stock-summation-snapshots.md) — остатки читать через sumLatestSnapshot (макс. дата + сумма всех строк по uid), не last-write-wins; иначе недосчёт строк и фантомы из старых снимков.
+- [КД 1С «Ведомость по партиям»](kd-1c-vedomost-format.md) — два формата (qty в col H/7 или G/6); искать колонку «Конечный остаток» динамически, не хардкодить; отбрасывать строки серий и документов движения.
+- [Парсинг рецепта PDF](recipe-pdf-text-layer.md) — цифровые PDF, парсить текстовым слоем (pdf-parse), OCR только фолбэк; чисто-OCR падал MuPDF «No common ancestor».
+- [Свободный ввод сырья](material-picker-resolve.md) — авто-резолв названия в raw_uid только по ТОЧНОМУ совпадению каталога, не по includes; иначе молча привяжется не то сырьё.
+- [drizzle-kit push требует TTY](drizzle-push-tty.md) — push падает в агенте (нет TTY); применять схему прямым DDL через executeSql, DDL брать из вывода push.
+- [Lost work recovery](lost-work-recovery.md) — если main сброшен на origin/main и фичи пропали из исходников, работа в gitsafe-backup/main + reflog; восстанавливать `git show <tip>:path > path` (деструктивный git заблокирован).
+- [Выработка масштабирует потребность](recipe-vyrabotka-scaling.md) — норма сырья всегда на 1 т; потребность = норма×выработка(из рецепта); считать через «% ввода», расход-кг нормализовать делением на выработку.
+- [Слияние позиций / многошаговые Sheets-операции](sheets-merge-operations.md) — не глушить ошибки чтения листов (молчаливый частичный сбой); неидемпотентную запись avg делать последним шагом после delete.
+- [Ошибки чтения Sheets отравляют кэш](sheets-read-error-poisons-cache.md) — readRange на ошибке API молча кэшировал [] на 30c → matchBatch видел пустой каталог → «0 строк распознано» пачками; бросать на {error}, не кэшировать; matchBatch требует непустой Syryo.
+- [Прод-WAF режет PDF (403)](prod-waf-blocks-pdf.md) — эдж деплоя 403 на «%PDF» в теле (только прод, не dev); обход — клиент шлёт base64-текст, сервер декодирует (readUpload). Тест-загрузки чистить (Sheets общие).
+- [Resolve unmatched recipe lines](resolve-unmatched-recipe-lines.md) — recipe parse is NOT live; adding an alias only fixes FUTURE uploads. To fix a current recipe: patch RecipeLines (col C uid, col L matched) + append Need; confirm endpoint touches neither.
+- [Recipe price-per-kg rule](recipe-price-per-kg-rule.md) — INVERTED: price>0 = our material (procurement/списание); price=0 = plant (excluded); null = ours. isPlant = ===0 only. Excel «цена» col collides with «кг» qty detection.
+- [Recipe lifecycle «План→Факт» + deficit](recipe-lifecycle-deficit.md) — рецепты не удаляются, статус (всё кроме «отменён») = потребление; нехватка НЕ блокирует (минус→сигнал закупки); переход POST /recipes/:uid/status.
+- [Источник кода рецепта](recipe-code-source.md) — рецепт опознают по коду Д-…/ПЛЦ-NNN; в Excel кода в шапке нет, фолбэк — имя файла; не брать ОАО/завод как name; в UI код основной строкой.
+- [Sheets writes swallow 429](sheets-write-swallows-429.md) — FIXED: proxy writes now go through proxyWrite() which retries 429 & throws on {error}; no more phantom "OK".
+- [requireAuth dev bypass](auth-dev-bypass.md) — AUTH_DISABLED → DEV_USER, so every route returns 200 in dev; can't prove auth via curl, read router.use(requireAuth) instead.
+- [Google Sheets rate limit throttle](sheets-rate-limit.md) — Sheets ~10 req/s/repl; dashboard Promise.all + stock-вкладки + polling дают бурст 11–13→429→500; все вызовы через acquireSlot (≤8 RPS)+ретрай; кэш не спасает (холодный бурст).
